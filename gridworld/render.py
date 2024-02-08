@@ -1,4 +1,13 @@
+import math
 import os
+import platform
+import time
+
+import numba
+import numpy as np
+from filelock import FileLock
+
+
 import pyglet
 pyglet.options['shadow_window'] = False
 if os.environ.get('IGLU_HEADLESS', '1') == '1':
@@ -7,47 +16,17 @@ if os.environ.get('IGLU_HEADLESS', '1') == '1':
     devices = os.environ.get('CUDA_VISIBLE_DEVICES')
     if devices is not None and devices != '':
         pyglet.options['headless_device'] = int(devices.split(',')[0])
-from pyglet.window import Window
-from pyglet.gl import *
-from pyglet import app
-from pyglet.graphics import Batch, TextureGroup
-from scipy.ndimage import gaussian_filter
-from pyglet import image
-import pyglet
-from filelock import FileLock
-import math
-import numpy as np
-import os
-import time
-import platform
-from PIL import Image
-import gridworld
 
-from .utils import WHITE, GREY, cube_vertices, cube_normals, id2texture, id2top_texture
+from pyglet import app, image
+from pyglet.gl import *
+from pyglet.graphics import Batch, TextureGroup
+from pyglet.window import Window
+
+import gridworld
+from .utils import WHITE, GREY, cube_vertices, id2texture, id2top_texture
 
 _60FPS = 1./60
 PLATFORM = platform.system()
-
-def setup_fog():
-    """ Configure the OpenGL fog properties.
-    """
-    glEnable(GL_FOG)
-    glFogfv(GL_FOG_COLOR, (GLfloat * 4)(0.5, 0.69, 1.0, 1))
-    glHint(GL_FOG_HINT, GL_DONT_CARE)
-    glFogi(GL_FOG_MODE, GL_LINEAR)
-    glFogf(GL_FOG_START, 25.0)
-    glFogf(GL_FOG_END, 30.0)
-
-
-def setup():
-    """ Basic OpenGL configuration.
-
-    """
-    glClearColor(0.5, 0.69, 1.0, 1)
-    glEnable(GL_CULL_FACE)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
-    # setup_fog()
 
 
 class Renderer(Window):
@@ -59,21 +38,33 @@ class Renderer(Window):
         self.agent = agent
         self.model.add_callback('on_add', self.add_block)
         self.model.add_callback('on_remove', self.remove_block)
+
         self.batch = Batch()
+
         dir_path = os.path.dirname(gridworld.__file__)
-        TEXTURE_PATH = os.path.join(dir_path, Renderer.TEXTURE_PATH)
-        with FileLock(f'/tmp/mylock'):
-            self.texture_group = TextureGroup(image.load(TEXTURE_PATH).get_texture())
+        texture_path = os.path.join(dir_path, Renderer.TEXTURE_PATH)
+        with FileLock(f'/tmp/iglu_lock'):
+            self.texture_group = TextureGroup(image.load(texture_path).get_texture())
+
         self.overlay = False
+
         self._shown = {}
-        self.label = pyglet.text.Label('', font_name='Arial', font_size=18,
+        self.label = pyglet.text.Label(
+            '', font_name='Arial', font_size=18,
             x=10, y=self.height - 10, anchor_x='left', anchor_y='top',
-            color=(0, 0, 0, 255))
+            color=(0, 0, 0, 255)
+        )
+
+        self.cube_vertices_cache = {}
+
+        # noinspection PyProtectedMember
         self.model._initialize()
         self.buffer_manager = pyglet.image.get_buffer_manager()
         self.last_frame_dt = 0
         self.realtime_rendering = os.environ.get('IGLU_RENDER_REALTIME', '0') == '1'
-        if not pyglet.options['headless']:
+
+        self.is_headless = pyglet.options['headless']
+        if not self.is_headless:
             app.platform_event_loop.start()
             self.dispatch_event('on_enter')
 
@@ -98,23 +89,10 @@ class Renderer(Window):
         width, height = self.get_size()
         glEnable(GL_DEPTH_TEST)
         viewport = self.get_viewport_size()
-        glViewport(0, 0, max(1, viewport[0]), max(1, viewport[1]))
-        glMatrixMode(GL_PROJECTION)
-        glLoadIdentity()
-        gluPerspective(90.0, width / float(height), 0.1, 30.0)
-        glMatrixMode(GL_MODELVIEW)
-        glLoadIdentity()
-        x, y = self.agent.rotation
-        glRotatef(x, 0, 1, 0)
-        glRotatef(-y, math.cos(math.radians(x)), 0, math.sin(math.radians(x)))
-        x, y, z = self.agent.position
-        glTranslatef(-x, -y, -z)
-
+        _set_3d(viewport, width, height, self.agent.position, self.agent.rotation)
 
     def on_draw(self):
-        """ Called by pyglet to draw the canvas.
-
-        """
+        """ Called by pyglet to draw the canvas."""
         self.clear()
         self.set_3d()
         glColor3d(1, 1, 1)
@@ -127,22 +105,27 @@ class Renderer(Window):
             self.draw_reticle()
 
     def render(self):
-        if not pyglet.options['headless']:
+        t = 0
+        if not self.is_headless:
             t = time.perf_counter()
             self.switch_to()
         self.on_draw()
         width, height = self.get_size()
-        if PLATFORM == 'Darwin' and not pyglet.options["headless"]:
+
+        if PLATFORM == 'Darwin' and not self.is_headless:
             new_shape = (height * 2, width * 2, 4)
         else:
             new_shape = (height, width, 4)
-        rendered = np.asanyarray(
+
+        rendered = np.asarray(
             self.buffer_manager
             .get_color_buffer()
             .get_image_data()
             .get_data()
         ).reshape(new_shape)[::-1]
-        if not pyglet.options['headless']:
+        rendered = np.ascontiguousarray(rendered)
+
+        if not self.is_headless:
             dt = time.perf_counter() - t
             self.last_frame_dt += dt
             if self.realtime_rendering:
@@ -153,30 +136,39 @@ class Renderer(Window):
                 app.platform_event_loop.step(dt)
                 self.last_frame_dt = 0.
         return rendered
-        
 
-    def add_block(self, position, texture_id, **kwargs):
+    def add_block(self, position, texture_id, **_):
         x, y, z = position
-        top_only = texture_id in [WHITE, GREY]
-        texture = (id2top_texture if top_only else id2texture)[texture_id]
-        vertex_data = cube_vertices(x, y, z, 0.5, top_only=top_only)
-        texture_data = list(texture)
+        top_only = texture_id == WHITE or texture_id == GREY
+
+        if top_only:
+            texture = id2top_texture[texture_id]
+        else:
+            texture = id2texture[texture_id]
+
+        cube_vertex_key = (x, y, z, top_only)
+        vertex_data = self.cube_vertices_cache.get(cube_vertex_key, None)
+        if vertex_data is None:
+            vertex_data = self.cube_vertices_cache[cube_vertex_key] = cube_vertices(
+                x, y, z, 0.5, top_only=top_only
+            )
+
         # create vertex list
         # FIXME Maybe `add_indexed()` should be used instead
-        self._shown[position] = self.batch.add(4 if top_only else 24, GL_QUADS, self.texture_group,
+        self._shown[position] = self.batch.add(
+            4 if top_only else 24,
+            GL_QUADS, self.texture_group,
             ('v3f/static', vertex_data),
-            ('t2f/static', texture_data),
+            ('t2f/static', texture),
         )
 
-    def remove_block(self, position, **kwargs):
+    def remove_block(self, position, **_):
         if position in self._shown:
             self._shown.pop(position).delete()
 
     def draw_focused_block(self):
-        """ Draw black edges around the block that is currently under the
-        crosshairs.
-
-        """
+        """ Draw black edges around the block that is currently under the crosshairs."""
+        assert False, 'Optimize this method.'
         block = self.model.get_focused_block(self.agent)
         if block:
             x, y, z = block
@@ -192,9 +184,11 @@ class Renderer(Window):
         """
         x, y, z = self.agent.position
         i = self.agent.inventory
-        self.label.text = f'{int(pyglet.clock.get_fps()):02d} ({x:.2f}, {y:.2f}, {z:.2f}) ' \
-            f'{len(self._shown)} / {len(self.model.world)} ' \
+        self.label.text = (
+            f'{int(pyglet.clock.get_fps()):02d} ({x:.2f}, {y:.2f}, {z:.2f}) '
+            f'{len(self._shown)} / {len(self.model.world)} '
             f'({i[0]}, {i[1]}, {i[2]}, {i[3]}, {i[4]}, {i[5]})'
+        )
         self.label.draw()
 
     def draw_reticle(self):
@@ -203,3 +197,28 @@ class Renderer(Window):
         """
         glColor3d(0, 0, 0)
         self.reticle.draw(GL_LINES)
+
+
+@numba.jit(nopython=True)
+def setup():
+    """ Basic OpenGL configuration."""
+    glClearColor(0.5, 0.69, 1.0, 1)
+    glEnable(GL_CULL_FACE)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
+
+
+@numba.jit(nopython=True)
+def _set_3d(viewport, width, height, agent_position, agent_rotation):
+    glViewport(0, 0, max(1, viewport[0]), max(1, viewport[1]))
+    glMatrixMode(GL_PROJECTION)
+    glLoadIdentity()
+    gluPerspective(90.0, width / float(height), 0.1, 30.0)
+    glMatrixMode(GL_MODELVIEW)
+    glLoadIdentity()
+    x, y = agent_rotation
+    glRotatef(x, 0, 1, 0)
+    x_radians = math.radians(x)
+    glRotatef(-y, math.cos(x_radians), 0, math.sin(x_radians))
+    x, y, z = agent_position
+    glTranslatef(-x, -y, -z)
