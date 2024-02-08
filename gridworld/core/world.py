@@ -1,6 +1,8 @@
 import math
 from typing import Optional
 
+import numba
+
 from ..utils import WHITE, GREY, BLUE, FACES
 from ..utils import FLYING_SPEED, WALKING_SPEED, GRAVITY, TERMINAL_VELOCITY, PLAYER_HEIGHT, JUMP_SPEED
 from ..utils import normalize
@@ -9,10 +11,11 @@ class Agent:
     PAD = 0.25
     __slots__ = 'flying', 'strafe', 'position', 'rotation', 'reticle', 'sustain', 'dy', 'time_int_steps', \
         'inventory', 'active_block'
+
     def __init__(self, sustain=False) -> None:
         # When flying gravity has no effect and speed is increased.
         self.flying = False
-        self.strafe = [0, 0]
+        self.strafe = (0, 0)
         self.position = (0, 0, 0)
         self.rotation = (0, 0)
         self.reticle = None
@@ -28,8 +31,12 @@ class Agent:
         ]
         self.active_block = BLUE
 
+
 class World:
     __slots__ = 'world', 'shown', 'placed', 'callbacks', 'initialized'
+
+    world: dict[tuple[int, int, int], int]
+
     def __init__(self):
         self.world = {}
         self.shown = {}
@@ -45,17 +52,14 @@ class World:
 
     ### BLOCKS RELATED METHODS
     def deinit(self):
-        for block in list(self.placed):
-            self.remove_block(block)
+        for position in self.placed:
+            self.remove_block(position)
         self.initialized = False
-        for block in list(self.world.keys()):
-            self.remove_block(block)
+        for position in self.world:
+            self.remove_block(position)
         self.world = {}
         self.shown = {}
         self.placed = set()
-
-    def build_zone(self, x, y, z, pad=0):
-        return -5 - pad <= x <= 5 + pad and -5 - pad <= z <= 5 + pad and -1 - pad <= y < 8 + pad
 
     def _initialize(self):
         """ Initialize the world by placing all the blocks.
@@ -66,7 +70,7 @@ class World:
         y = 0  # initial y height
         for x in range(-n, n + 1, s):
             for z in range(-n, n + 1, s):
-                color = GREY if not self.build_zone(x, y, z) else WHITE
+                color = GREY if not _build_zone(x, y, z) else WHITE
                 self.add_block((x, y - 2, z), color)
         self.initialized = True
 
@@ -112,12 +116,20 @@ class World:
             Whether or not to draw the block immediately.
 
         """
+
+        if not isinstance(position[0], int):
+            x, y, z = position
+            x, y, z = int(x), int(y), int(z)
+            position = (x, y, z)
+
         if position in self.world:
             self.remove_block(position)
         self.world[position] = texture
         self.shown[position] = texture
+
+        build_zone = _build_zone(position[0], position[1], position[2])
         for cb in self.callbacks['on_add']:
-            cb(position, texture, build_zone=self.build_zone(*position))
+            cb(position, texture, build_zone=build_zone)
         if self.initialized:
             self.placed.add(position)
 
@@ -132,11 +144,12 @@ class World:
             Whether or not to immediately remove block from canvas.
 
         """
-        del self.world[position]
+        self.world.pop(position)
         if position in self.shown:
             self.shown.pop(position)
+            build_zone = _build_zone(position[0], position[1], position[2])
             for cb in self.callbacks['on_remove']:
-                cb(position, build_zone=self.build_zone(*position))
+                cb(position, build_zone=build_zone)
         if self.initialized:
             self.placed.remove(position)
     ### END BLOCKS RELATED METHODS
@@ -149,16 +162,7 @@ class World:
 
         """
         x, y = agent.rotation
-        # y ranges from -90 to 90, or -pi/2 to pi/2, so m ranges from 0 to 1 and
-        # is 1 when looking ahead parallel to the ground and 0 when looking
-        # straight up or down.
-        m = math.cos(math.radians(y))
-        # dy ranges from -1 to 1 and is -1 when looking straight down and 1 when
-        # looking straight up.
-        dy = math.sin(math.radians(y))
-        dx = math.cos(math.radians(x - 90)) * m
-        dz = math.sin(math.radians(x - 90)) * m
-        return (dx, dy, dz)
+        return _get_sight_vector(x, y)
 
     def get_motion_vector(self, agent):
         """
@@ -171,34 +175,8 @@ class World:
             Tuple containing the velocity in x, y, and z respectively.
 
         """
-        if any(agent.strafe):
-            x, y = agent.rotation
-            strafe = math.degrees(math.atan2(*agent.strafe))
-            y_angle = math.radians(y)
-            x_angle = math.radians(x + strafe)
-            if agent.flying:
-                m = math.cos(y_angle)
-                dy = math.sin(y_angle)
-                if agent.strafe[1]:
-                    # Moving left or right.
-                    dy = 0.0
-                    m = 1
-                if agent.strafe[0] > 0:
-                    # Moving backwards.
-                    dy *= -1
-                # When you are flying up or down, you have less left and right
-                # motion.
-                dx = math.cos(x_angle) * m
-                dz = math.sin(x_angle) * m
-            else:
-                dy = 0.0
-                dx = math.cos(x_angle)
-                dz = math.sin(x_angle)
-        else:
-            dy = 0.0
-            dx = 0.0
-            dz = 0.0
-        return (dx, dy, dz)
+        strafe_fb, strafe_lr = agent.strafe
+        return _get_motion_vector((strafe_fb, strafe_lr), agent.rotation, agent.flying)
 
     def update(self, agent, dt=1.0/5):
         """ This method is scheduled to be called repeatedly by the pyglet
@@ -215,7 +193,7 @@ class World:
         for _ in range(m):
             self._update(agent, dt / m)
         if not agent.sustain:
-            agent.strafe = [0, 0]
+            agent.strafe = (0, 0)
             if agent.flying:
                 agent.dy = 0
 
@@ -255,7 +233,7 @@ class World:
         # collisions
         x, y, z = agent.position
         cand = (x + dx, y + dy, z + dz)
-        if self.build_zone(*cand, pad=2):
+        if _build_zone(*cand, pad=2):
             x, y, z = self.collide(agent, cand, PLAYER_HEIGHT)
         elif not agent.flying:
             x, y, z = self.collide(agent, (x, y + dy, z), PLAYER_HEIGHT)
@@ -315,7 +293,7 @@ class World:
         block, previous = self.hit_test(agent.position, vector)
         if place:
             if previous:
-                if agent.inventory[agent.active_block - 1] > 0 and self.build_zone(*previous):
+                if agent.inventory[agent.active_block - 1] > 0 and _build_zone(*previous):
                     x, y, z = agent.position
                     y = y - (PLAYER_HEIGHT - 1) + Agent.PAD
                     bx, by, bz = previous
@@ -335,23 +313,17 @@ class World:
         vector = self.get_sight_vector(agent)
         return self.hit_test(agent.position, vector)[0]
 
-    def move_camera(self, agent, dx, dy):
-        x, y = agent.rotation
-        x, y = x + dx, y + dy
-        y = max(-90, min(90, y))
-        agent.rotation = (x, y)
+    @staticmethod
+    def move_camera(agent, dx: float, dy: float):
+        agent.rotation = _move_camera(agent.rotation, dx, dy)
 
-    def movement(self, agent, 
-            strafe: list, dy: float, inventory: Optional[int] = None, 
-        ):
-        agent.strafe[0] += strafe[0]
-        agent.strafe[1] += strafe[1]
-        if dy != 0 and agent.dy == 0:
-            agent.dy = JUMP_SPEED * dy
-        if agent.flying and dy == 0:
-            agent.dy = 0
+    @staticmethod
+    def movement(agent, strafe: tuple[int, int], dy: float, inventory: Optional[int] = None):
+        agent.strafe = _add_strafe(agent.strafe, strafe)
+        agent.dy = _compute_dy(agent.dy, dy, agent.flying)
+
         if inventory is not None:
-            if inventory < 1 or inventory > 6:
+            if not (1 <= inventory <= 6):
                 raise ValueError(f'Bad inventory id: {inventory}')
             agent.active_block = inventory
     ### END AGENT CONTROL
@@ -423,7 +395,7 @@ class World:
               * 'inventory': Discrete(7) - 0 for no-op, 1-6 for selecting block color
               * 'placement': Discrete(3) - 0 for no-op, 1 for placement, 2 for breaking
         """
-        strafe = list(action['movement'][:2])
+        strafe = tuple(action['movement'][:2])
         dy = action['movement'][2]
         camera = list(action['camera'])
         inventory = action['inventory'] if action['inventory'] != 0 else None
@@ -439,6 +411,8 @@ class World:
                 tup = self.parse_walking_action(action)
         elif action_space == 'flying':
             tup = self.parse_flying_action(action)
+        else:
+            raise ValueError(f'Unknown action space: {action_space}')
 
         strafe, dy, inventory, camera, remove, add = tup
         if select_and_place and inventory is not None:
@@ -455,3 +429,99 @@ class World:
             yaw += 360.0
         agent.rotation = (yaw, pitch)
     ### END UNIFIED AGENT CONTROL
+
+
+# OPTIMIZED NUMBA IMPLEMENTATIONS
+
+@numba.jit(nopython=True, cache=True)
+def _get_sight_vector(x, y):
+    # y ranges from -90 to 90, or -pi/2 to pi/2, so m ranges from 0 to 1 and
+    # is 1 when looking ahead parallel to the ground and 0 when looking
+    # straight up or down.
+    m = math.cos(math.radians(y))
+    # dy ranges from -1 to 1 and is -1 when looking straight down and 1 when
+    # looking straight up.
+    dy = math.sin(math.radians(y))
+    dx = math.cos(math.radians(x - 90)) * m
+    dz = math.sin(math.radians(x - 90)) * m
+    return dx, dy, dz
+
+
+@numba.jit(nopython=True, cache=True)
+def _get_motion_vector(agent_strafe: tuple[int, int], agent_rotation, agent_flying):
+    """
+    Returns the current motion vector indicating the velocity of the
+    player: tuple containing the velocity in x, y, and z respectively.
+    """
+    agent_strafe_fb, agent_strafe_lr = agent_strafe
+    is_strafe = agent_strafe_fb != 0 or agent_strafe_lr != 0
+
+    if is_strafe:
+        x, y = agent_rotation
+        strafe = math.degrees(math.atan2(agent_strafe_fb, agent_strafe_lr))
+        y_angle = math.radians(y)
+        x_angle = math.radians(x + strafe)
+        if agent_flying:
+            m = math.cos(y_angle)
+            dy = math.sin(y_angle)
+            if agent_strafe_lr:
+                # Moving left or right.
+                dy = 0.0
+                m = 1
+            if agent_strafe_fb > 0:
+                # Moving backwards.
+                dy *= -1
+            # When you are flying up or down, you have less left and right
+            # motion.
+            dx = math.cos(x_angle) * m
+            dz = math.sin(x_angle) * m
+        else:
+            dy = 0.0
+            dx = math.cos(x_angle)
+            dz = math.sin(x_angle)
+    else:
+        dy = 0.0
+        dx = 0.0
+        dz = 0.0
+    return dx, dy, dz
+
+
+@numba.jit(nopython=True, cache=True, inline='always')
+def _add_strafe(agent_strafe: tuple[int, int], strafe: tuple[int, int]) -> tuple[int, int]:
+    ag_strafe_fb, ag_strafe_lr = agent_strafe
+    strafe_fb, strafe_lr = strafe
+    return ag_strafe_fb + strafe_fb, ag_strafe_lr + strafe_lr
+
+
+@numba.jit(nopython=True, cache=True, inline='always')
+def _compute_dy(agent_dy: float, dy: float, agent_flying: bool) -> float:
+    if dy != 0 and agent_dy == 0:
+        return JUMP_SPEED * dy
+    if agent_flying and dy == 0:
+        return 0.
+
+
+@numba.jit(nopython=True, cache=True, inline='always')
+def _move_camera(agent_rotation: tuple[float, float], dx: float, dy: float) -> tuple[float, float]:
+    x, y = agent_rotation
+    x, y = x + dx, y + dy
+    y = max(-90., min(90., y))
+    return x, y
+
+
+@numba.jit(nopython=True, cache=True, inline='always')
+def _build_zone(x, y, z, pad=0):
+    return -5 - pad <= x <= 5 + pad and -5 - pad <= z <= 5 + pad and -1 - pad <= y < 8 + pad
+
+
+@numba.jit(nopython=True, cache=True)
+def _remove_block(
+        position: tuple[int, int, int], shown, callbacks, initialized, placed
+):
+    if position in shown:
+        shown.pop(position)
+        x, y, z = position
+        for cb in callbacks['on_remove']:
+            cb(position, build_zone=_build_zone(x, y, z))
+    if initialized:
+        placed.remove(position)
