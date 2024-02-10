@@ -121,7 +121,6 @@ class World:
         texture : list of len 3
             The coordinates of the texture squares. Use `texture_coordinates()` to
             generate.
-
         """
         block_position = to_int_3d(block_position)
         x, y, z = block_position
@@ -139,13 +138,7 @@ class World:
             self.placed.add(block_position)
 
     def remove_block(self, block_position: int_3d):
-        """ Remove the block at the given `position`.
-
-        Parameters
-        ----------
-        block_position : tuple of len 3
-            The (x, y, z) position of the block to remove.
-        """
+        """ Remove the block at the given `position."""
         block_position = to_int_3d(block_position)
         x, y, z = block_position
 
@@ -168,59 +161,20 @@ class World:
         """
         dt = min(dt, 0.2) / agent.time_int_steps
         is_flying = agent.flying
-        self_motion_direction = _get_motion_direction(agent.strafe, agent.rotation, is_flying)
-        speed = FLYING_SPEED if is_flying else WALKING_SPEED
 
-        agent.position, agent.dy, agent.time_int_steps = self._update(
-            agent.position, self_motion_direction, speed, dt,
-            agent.dy, is_flying, agent.time_int_steps
+        speed = FLYING_SPEED if is_flying else WALKING_SPEED
+        speed_direction = _get_motion_direction(agent.strafe, agent.rotation, is_flying)
+        self_motion_delta = _integrate_movement_over_time(speed, speed_direction, dt)
+
+        agent.position, agent.dy, agent.time_int_steps = _update(
+            agent.position, self_motion_delta, dt, agent.dy, is_flying,
+            agent.time_int_steps, self.world, FACES
         )
 
         if not agent.sustain:
             agent.strafe = (0, 0)
             if agent.flying:
                 agent.dy = 0
-
-    def _update(
-            self, agent_position, self_motion_direction, speed, dt: float,
-            agent_dy: float, is_flying: bool, agent_time_int_steps: int
-    ):
-        """
-        Private implementation of the `update()` method. This is where most
-        of the motion logic lives, along with gravity and collision detection.
-
-        Parameters
-        ----------
-        dt : float
-            The change in time since the last call.
-
-        """
-
-        for _ in range(agent_time_int_steps):
-            if not is_flying:
-                # apply gravity to agent
-                agent_dy, agent_time_int_steps = _handle_vertical_motion(agent_dy, dt)
-
-            # distance covered this tick via self-motion
-            dx, dy, dz = _integrate_self_movement_over_time(speed, dt, self_motion_direction)
-            # add the gravity-induced motion
-            dy += agent_dy * dt
-
-            # calc new position + check collisions
-            stop_falling_or_rising = False
-            x, y, z = agent_position
-            x, y, z = x + dx, y + dy, z + dz
-            if _is_build_zone(x, y, z, pad=2):
-                (x, y, z), stop_falling_or_rising = _collide((x, y, z), self.world, FACES)
-            elif not is_flying:
-                (x, y, z), stop_falling_or_rising = _collide((x, y + dy, z), self.world, FACES)
-
-            if stop_falling_or_rising:
-                agent_dy = 0
-
-            agent_position = (x, y, z)
-
-        return agent_position, agent_dy, agent_time_int_steps
 
     def place_or_remove_block(self, agent, remove: bool, place: bool):
         if place == remove:
@@ -263,9 +217,7 @@ class World:
 
     @staticmethod
     def move_camera(agent, dx: float, dy: float):
-        agent.rotation = _cycle_rotation(
-            _move_camera(agent.rotation, dx, dy)
-        )
+        agent.rotation = _move_camera(agent.rotation, dx, dy)
 
     @staticmethod
     def movement(agent, strafe: tuple[int, int], dy: float, inventory: Optional[int] = None):
@@ -342,8 +294,8 @@ class World:
         """
         Args:
             action: dictionary with keys:
-              * 'movement':  Box(low=-1, high=1, shape=(3,)) - forward/backward, left/right, 
-                  up/down movement 
+              * 'movement':  Box(low=-1, high=1, shape=(3,)) - forward/backward, left/right,
+                  up/down movement
               * 'camera': Box(low=[-180, -90], high=[180, 90], shape=(2,)) - camera movement (yaw, pitch)
               * 'inventory': Discrete(7) - 0 for no-op, 1-6 for selecting block color
               * 'placement': Discrete(3) - 0 for no-op, 1 for placement, 2 for breaking
@@ -356,9 +308,7 @@ class World:
         remove = action['placement'] == 2
         return strafe, dy, inventory, camera, remove, add
 
-    def step(
-            self, agent, action, select_and_place=False, action_space='walking', discretize=False
-    ):
+    def step(self, agent, action, select_and_place=False, action_space='walking', discretize=True):
         if action_space == 'walking':
             if discretize:
                 tup = self.parse_walking_discrete_action(action)
@@ -395,15 +345,15 @@ def _add_initial_blocks(blocks: dict[int_3d, int]):
 
 
 @numba.jit(nopython=True, cache=True, inline='always')
-def _integrate_self_movement_over_time(v, dt, unit_motion_direction):
+def _integrate_movement_over_time(v: float, v_direction: float_3d, dt: float) -> float_3d:
     # distance covered over time dt along the motion direction with speed v.
-    dx, dy, dz = unit_motion_direction
+    dx, dy, dz = v_direction
     distance = v * dt
     return dx * distance, dy * distance, dz * distance
 
 
 @numba.jit(nopython=True, cache=True)
-def _handle_vertical_motion(agent_dy, dt) -> tuple[float, int]:
+def _handle_vertical_motion(agent_dy: float, dt: float) -> tuple[float, int]:
     # Update your vertical speed: if you are falling, speed up until you
     # hit terminal velocity; if you are jumping, slow down until you
     # start falling.
@@ -413,7 +363,7 @@ def _handle_vertical_motion(agent_dy, dt) -> tuple[float, int]:
     return agent_dy, time_int_steps
 
 
-@numba.jit(nopython=True, cache=True)
+@numba.jit(nopython=True, cache=True, inline='always')
 def _n_update_steps_from_falling_speed(dy: float) -> int:
     if dy < -14:
         return 12
@@ -441,43 +391,37 @@ def get_sight_vector(rotation: float_2d) -> float_3d:
 
 
 @numba.jit(nopython=True, cache=True)
-def _get_motion_direction(
-        agent_strafe: int_2d, agent_rotation: float_2d, agent_flying: bool
-):
+def _get_motion_direction(strafe: int_2d, rotation: float_2d, is_flying: bool) -> float_3d:
     """
     Returns the current motion vector indicating the velocity of the
     player: tuple containing the velocity in x, y, and z respectively.
     """
-    agent_strafe_fb, agent_strafe_lr = agent_strafe
-    is_strafe = agent_strafe_fb != 0 or agent_strafe_lr != 0
+    # fb: forward/backward, lr: left/right
+    strafe_fb, strafe_lr = strafe
+    is_strafe = strafe_fb != 0 or strafe_lr != 0
 
-    if is_strafe:
-        x, y = agent_rotation
-        strafe = math.degrees(math.atan2(agent_strafe_fb, agent_strafe_lr))
-        y_angle = math.radians(y)
-        x_angle = math.radians(x + strafe)
-        if agent_flying:
-            m = math.cos(y_angle)
-            dy = math.sin(y_angle)
-            if agent_strafe_lr:
-                # Moving left or right.
-                dy = 0.0
-                m = 1
-            if agent_strafe_fb > 0:
-                # Moving backwards.
-                dy *= -1
-            # When you are flying up or down, you have less left and right
-            # motion.
-            dx = math.cos(x_angle) * m
-            dz = math.sin(x_angle) * m
-        else:
-            dy = 0.0
-            dx = math.cos(x_angle)
-            dz = math.sin(x_angle)
+    if not is_strafe:
+        return 0., 0., 0.
+
+    x, y = rotation
+    strafe_degrees = math.degrees(math.atan2(strafe_fb, strafe_lr))
+    y_angle = math.radians(y)
+    x_angle = math.radians(x + strafe_degrees)
+    dx = math.cos(x_angle)
+    dz = math.sin(x_angle)
+    if is_flying:
+        m = math.cos(y_angle)
+        dy = math.sin(y_angle)
+        if strafe_lr:
+            # Moving left or right.
+            dy, m = 0.0, 1.0
+        if strafe_fb > 0:
+            # Moving backwards.
+            dy *= -1
+        # When you are flying up or down, you have less left and right motion.
+        dx, dz = dx * m, dz * m
     else:
         dy = 0.0
-        dx = 0.0
-        dz = 0.0
     return dx, dy, dz
 
 
@@ -497,25 +441,21 @@ def _compute_dy(agent_dy: float, dy: float, agent_flying: bool) -> float:
 
 
 @numba.jit(nopython=True, cache=True, inline='always')
-def _move_camera(rotation: float_2d, dx: float, dy: float) -> float_2d:
+def _move_camera(rotation: float_2d, d_yaw: float, d_pitch: float) -> tuple[float, float]:
     yaw, pitch = rotation
-    yaw, pitch = yaw + dx, pitch + dy
+    yaw, pitch = yaw + d_yaw, pitch + d_pitch
+
     pitch = max(-90., min(90., pitch))
-    return yaw, pitch
-
-
-@numba.jit(nopython=True, cache=True, inline='always')
-def _cycle_rotation(rotation):
-    yaw, pitch = rotation
     while yaw > 360.:
         yaw -= 360.
     while yaw < 0.0:
         yaw += 360.0
+
     return yaw, pitch
 
 
 @numba.jit(nopython=True, cache=True, inline='always')
-def _is_build_zone(x: int, y: int, z: int, pad: int = 0) -> bool:
+def _is_build_zone(x, y, z, pad=0):
     return -5 - pad <= x <= 5 + pad and -5 - pad <= z <= 5 + pad and -1 - pad <= y < 8 + pad
 
 
@@ -573,11 +513,11 @@ def _is_agent_near(agent_position: float_3d, bx: int, by: int, bz: int) -> bool:
 def _collide(
         position: float_3d, world: dict[int_3d, int], faces: list[int_3d]
 ) -> tuple[float_3d, bool]:
-    position = discretize_3d(position)
+    stop_vertical = False
 
-    stop_falling_or_rising = False
     new_position = list(position)
-    collide_candidate = list(position)
+    block = discretize_3d(position)
+    collide_candidate = list(block)
 
     # check all surrounding blocks
     for face_id, face in enumerate(faces):
@@ -592,7 +532,7 @@ def _collide(
                 continue
 
             # how much overlap you have with this dimension.
-            overlap = (new_position[axis] - position[axis]) * bound_direction
+            overlap = (new_position[axis] - block[axis]) * bound_direction
             if overlap < PLAYER_PAD:
                 # you are not touching the block in this dimension.
                 continue
@@ -602,19 +542,52 @@ def _collide(
             is_collided = _check_collision(x, y, z, world)
             collide_candidate[axis] -= bound_direction
 
-            stop_falling_or_rising |= is_collided and is_ground_or_ceiling
+            stop_vertical |= is_collided and is_ground_or_ceiling
             if is_collided:
                 new_position[axis] -= bound_direction * (overlap - PLAYER_PAD)
 
     x, y, z = new_position
-    return (x, y, z), stop_falling_or_rising
+    return (x, y, z), stop_vertical
 
 
 @numba.jit(nopython=True, cache=True)
-def _check_collision(x, y, z, world):
+def _check_collision(x: int, y: int, z: int, world: dict[int_3d, int]) -> bool:
     # traverse sequentially over the height of the player
     for _ in range(PLAYER_HEIGHT):
         if (x, y, z) in world:
             return True
         y -= 1
     return False
+
+
+@numba.jit(nopython=True, cache=True)
+def _update(
+        agent_position: float_3d, self_motion_delta: float_3d, dt: float,
+        agent_dy: float, is_flying: bool, agent_time_int_steps: int,
+        world, faces
+):
+    for _ in range(agent_time_int_steps):
+        if not is_flying:
+            # apply gravity to agent
+            agent_dy, agent_time_int_steps = _handle_vertical_motion(agent_dy, dt)
+
+        # distance covered this tick via self-motion
+        dx, dy, dz = self_motion_delta
+        # add the gravity-induced motion
+        dy += agent_dy * dt
+
+        # calc new position + check collisions
+        stop_vertical = False
+        x, y, z = agent_position
+        _x, _y, _z = x + dx, y + dy, z + dz
+
+        if _is_build_zone(_x, _y, _z, pad=2):
+            (x, y, z), stop_vertical = _collide((_x, _y, _z), world, faces)
+        elif not is_flying:
+            (x, y, z), stop_vertical = _collide((x, y + dy, z), world, faces)
+
+        agent_position = (x, y, z)
+        if stop_vertical:
+            agent_dy = 0
+
+    return agent_position, agent_dy, agent_time_int_steps

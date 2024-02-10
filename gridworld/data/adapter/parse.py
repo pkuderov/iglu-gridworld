@@ -14,6 +14,7 @@ from .common import DEFAULT_POS, VWEvent, \
 import numpy as np
 
 from ..iglu_dataset import IGLUDataset, SingleTurnIGLUDataset, fix_xyz, fix_log
+from ...core.world import get_sight_vector
 from ...utils import BUILD_ZONE_SIZE
 
 
@@ -131,7 +132,7 @@ class ActionsParser:
             # TODO: check for the new data format
             self.agent.position = self.position.tolist()
             self.agent.rotation = self.camera.tolist()
-            vector = self.world.get_sight_vector(self.agent.rotation)
+            vector = get_sight_vector(self.agent.rotation)
             block, prev = self.world.hit_test(self.agent.position, vector, max_distance=10)
             bid, x, y, z = list(map(int, args[:4]))
             y -= VOXELWORLD_GROUND_LEVEL + 1
