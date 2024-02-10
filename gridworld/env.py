@@ -30,7 +30,7 @@ class GridWorld(Env):
             render_size=(64, 64), target_in_obs=False, action_space='walking', 
             vector_state=True, fake=False, name=''
     ):
-
+        self.print_fps = os.environ.get('IGLU_DEBUG_FPS', '0') == '1'
         self.elapsed_time = 0.
         self.n_computes = 0
 
@@ -269,7 +269,7 @@ class GridWorld(Env):
         self.elapsed_time += elapsed_time
         self.n_computes += 1
 
-        if self.n_computes == 1000:
+        if self.print_fps and self.n_computes >= 1000:
             dt = self.elapsed_time
             print(f'Run time (render): {1 / dt:.2f} kFPS')
             self.elapsed_time = 0.
