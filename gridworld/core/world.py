@@ -2,15 +2,25 @@ import math
 from typing import Optional
 
 import numba
+from numba.typed.typeddict import Dict
 
-from ..utils import WHITE, GREY, BLUE, FACES
-from ..utils import FLYING_SPEED, WALKING_SPEED, GRAVITY, TERMINAL_VELOCITY, PLAYER_HEIGHT, JUMP_SPEED
-from ..utils import normalize
+from ..utils import (
+    WHITE, GREY, BLUE, FACES, int_3d, FLYING_SPEED, WALKING_SPEED, GRAVITY,
+    TERMINAL_VELOCITY, PLAYER_HEIGHT, JUMP_SPEED, discretize_3d, float_3d, float_2d, int_2d,
+    to_float_3d, to_int_3d
+)
+
+
+PLAYER_PAD = 0.25
+
 
 class Agent:
-    PAD = 0.25
-    __slots__ = 'flying', 'strafe', 'position', 'rotation', 'reticle', 'sustain', 'dy', 'time_int_steps', \
-        'inventory', 'active_block'
+    __slots__ = (
+        'flying', 'strafe', 'position', 'rotation', 'reticle', 'sustain',
+        'dy', 'time_int_steps', 'inventory', 'active_block'
+    )
+
+    position: int_3d
 
     def __init__(self, sustain=False) -> None:
         # When flying gravity has no effect and speed is increased.
@@ -33,12 +43,26 @@ class Agent:
 
 
 class World:
-    __slots__ = 'world', 'shown', 'placed', 'callbacks', 'initialized'
+    __slots__ = (
+        'world', 'init_blocks', 'shown', 'placed', 'callbacks', 'initialized'
+    )
 
-    world: dict[tuple[int, int, int], int]
+    world: dict[int_3d, int]
+    # a set of block coordinates along with their colors that are placed initially
+    init_blocks: dict[int_3d, int]
 
     def __init__(self):
-        self.world = {}
+        # make it
+        self.world = Dict.empty(
+            key_type=numba.typeof((0, 0, 0)),
+            value_type=numba.typeof(0)
+        )
+        self.init_blocks = Dict.empty(
+            key_type=numba.typeof((0, 0, 0)),
+            value_type=numba.typeof(0)
+        )
+        _add_initial_blocks(self.init_blocks)
+
         self.shown = {}
         self.placed = set()
         self.callbacks = {
@@ -50,28 +74,22 @@ class World:
     def add_callback(self, name, func):
         self.callbacks[name].append(func)
 
-    ### BLOCKS RELATED METHODS
-    def deinit(self):
+    # ========= BLOCKS RELATED METHODS =========
+    def reset(self):
         for position in self.placed:
             self.remove_block(position)
         self.initialized = False
         for position in self.world:
             self.remove_block(position)
-        self.world = {}
+
+        assert len(self.world) == 0
+        self.world.clear()
         self.shown = {}
         self.placed = set()
 
-    def _initialize(self):
-        """ Initialize the world by placing all the blocks.
-
-        """
-        n = 18  # 1/2 width and height of world
-        s = 1  # step size
-        y = 0  # initial y height
-        for x in range(-n, n + 1, s):
-            for z in range(-n, n + 1, s):
-                color = GREY if not _build_zone(x, y, z) else WHITE
-                self.add_block((x, y - 2, z), color)
+    def initialize(self):
+        for position, texture in self.init_blocks.items():
+            self.add_block(position, texture)
         self.initialized = True
 
     def hit_test(self, position, vector, max_distance=8):
@@ -90,114 +108,83 @@ class World:
             How many blocks away to search for a hit.
 
         """
-        m = 5
-        x, y, z = position
-        dx, dy, dz = vector
-        previous = None
-        for _ in range(max_distance * m):
-            key = normalize((x, y, z))
-            if key != previous and key in self.world:
-                return key, previous
-            previous = key
-            x, y, z = x + dx / m, y + dy / m, z + dz / m
-        return None, None
+        position = to_float_3d(position)
+        return _hit_test(self.world, position, vector, max_distance)
 
-    def add_block(self, position, texture):
+    def add_block(self, block_position: int_3d, texture: int):
         """ Add a block with the given `texture` and `position` to the world.
 
         Parameters
         ----------
-        position : tuple of len 3
+        block_position : tuple of len 3
             The (x, y, z) position of the block to add.
         texture : list of len 3
-            The coordinates of the texture squares. Use `tex_coords()` to
+            The coordinates of the texture squares. Use `texture_coordinates()` to
             generate.
-        immediate : bool
-            Whether or not to draw the block immediately.
 
         """
+        block_position = to_int_3d(block_position)
+        x, y, z = block_position
 
-        if not isinstance(position[0], int):
-            x, y, z = position
-            x, y, z = int(x), int(y), int(z)
-            position = (x, y, z)
+        if block_position in self.world:
+            self.remove_block(block_position)
 
-        if position in self.world:
-            self.remove_block(position)
-        self.world[position] = texture
-        self.shown[position] = texture
+        self.world[block_position] = texture
+        self.shown[block_position] = texture
 
-        build_zone = _build_zone(position[0], position[1], position[2])
+        build_zone = _is_build_zone(x, y, z)
         for cb in self.callbacks['on_add']:
-            cb(position, texture, build_zone=build_zone)
+            cb(block_position, texture, build_zone=build_zone)
         if self.initialized:
-            self.placed.add(position)
+            self.placed.add(block_position)
 
-    def remove_block(self, position):
+    def remove_block(self, block_position: int_3d):
         """ Remove the block at the given `position`.
 
         Parameters
         ----------
-        position : tuple of len 3
+        block_position : tuple of len 3
             The (x, y, z) position of the block to remove.
-        immediate : bool
-            Whether or not to immediately remove block from canvas.
-
         """
-        self.world.pop(position)
-        if position in self.shown:
-            self.shown.pop(position)
-            build_zone = _build_zone(position[0], position[1], position[2])
+        block_position = to_int_3d(block_position)
+        x, y, z = block_position
+
+        self.world.pop(block_position)
+
+        if block_position in self.shown:
+            self.shown.pop(block_position)
+            build_zone = _is_build_zone(x, y, z)
             for cb in self.callbacks['on_remove']:
-                cb(position, build_zone=build_zone)
+                cb(block_position, build_zone=build_zone)
+
         if self.initialized:
-            self.placed.remove(position)
-    ### END BLOCKS RELATED METHODS
+            self.placed.remove(block_position)
+    # ========= END BLOCKS RELATED METHODS =========
 
-    ### AGENT CONTROL METHODS
-    def get_sight_vector(self, agent):
+    # ========= AGENT CONTROL METHODS =========
+    def update(self, agent: Agent, dt=1.0/5):
+        """ This method is scheduled to be called repeatedly by the pyglet clock,
+        where `dt` — the change in time since the last call.
         """
-        Returns the current line of sight vector indicating the direction
-        the player is looking.
+        dt = min(dt, 0.2) / agent.time_int_steps
+        is_flying = agent.flying
+        self_motion_direction = _get_motion_direction(agent.strafe, agent.rotation, is_flying)
+        speed = FLYING_SPEED if is_flying else WALKING_SPEED
 
-        """
-        x, y = agent.rotation
-        return _get_sight_vector(x, y)
+        agent.position, agent.dy, agent.time_int_steps = self._update(
+            agent.position, self_motion_direction, speed, dt,
+            agent.dy, is_flying, agent.time_int_steps
+        )
 
-    def get_motion_vector(self, agent):
-        """
-        Returns the current motion vector indicating the velocity of the
-        player.
-
-        Returns
-        -------
-        vector : tuple of len 3
-            Tuple containing the velocity in x, y, and z respectively.
-
-        """
-        strafe_fb, strafe_lr = agent.strafe
-        return _get_motion_vector((strafe_fb, strafe_lr), agent.rotation, agent.flying)
-
-    def update(self, agent, dt=1.0/5):
-        """ This method is scheduled to be called repeatedly by the pyglet
-        clock.
-
-        Parameters
-        ----------
-        dt : float
-            The change in time since the last call.
-
-        """
-        m = agent.time_int_steps
-        dt = min(dt, 0.2)
-        for _ in range(m):
-            self._update(agent, dt / m)
         if not agent.sustain:
             agent.strafe = (0, 0)
             if agent.flying:
                 agent.dy = 0
 
-    def _update(self, agent, dt):
+    def _update(
+            self, agent_position, self_motion_direction, speed, dt: float,
+            agent_dy: float, is_flying: bool, agent_time_int_steps: int
+    ):
         """
         Private implementation of the `update()` method. This is where most
         of the motion logic lives, along with gravity and collision detection.
@@ -208,114 +195,77 @@ class World:
             The change in time since the last call.
 
         """
-        # walking
-        speed = FLYING_SPEED if agent.flying else WALKING_SPEED
-        d = dt * speed # distance covered this tick.
-        dx, dy, dz = self.get_motion_vector(agent)
-        # New position in space, before accounting for gravity.
-        dx, dy, dz = dx * d, dy * d, dz * d
-        # gravity
-        if not agent.flying:
-            # Update your vertical speed: if you are falling, speed up until you
-            # hit terminal velocity; if you are jumping, slow down until you
-            # start falling.
-            agent.dy -= dt * GRAVITY
-            if agent.dy < -14:
-                agent.time_int_steps = 12
-            elif agent.dy < -10:
-                agent.time_int_steps = 8
-            elif agent.dy < -5:
-                agent.time_int_steps = 4
-            else:
-                agent.time_int_steps = 2
-            agent.dy = max(agent.dy, -TERMINAL_VELOCITY)
-        dy += agent.dy * dt
-        # collisions
-        x, y, z = agent.position
-        cand = (x + dx, y + dy, z + dz)
-        if _build_zone(*cand, pad=2):
-            x, y, z = self.collide(agent, cand, PLAYER_HEIGHT)
-        elif not agent.flying:
-            x, y, z = self.collide(agent, (x, y + dy, z), PLAYER_HEIGHT)
-        agent.position = (x, y, z)
 
-    def collide(self, agent, position, height, new_blocks=None):
-        """
-        Checks to see if the player at the given `position` and `height`
-        is colliding with any blocks in the world.
+        for _ in range(agent_time_int_steps):
+            if not is_flying:
+                # apply gravity to agent
+                agent_dy, agent_time_int_steps = _handle_vertical_motion(agent_dy, dt)
 
-        Parameters
-        ----------
-        position : tuple of len 3
-            The (x, y, z) position to check for collisions at.
-        height : int or float
-            The height of the player.
+            # distance covered this tick via self-motion
+            dx, dy, dz = _integrate_self_movement_over_time(speed, dt, self_motion_direction)
+            # add the gravity-induced motion
+            dy += agent_dy * dt
 
-        Returns
-        -------
-        position : tuple of len 3
-            The new position of the player taking into account collisions.
+            # calc new position + check collisions
+            stop_falling_or_rising = False
+            x, y, z = agent_position
+            x, y, z = x + dx, y + dy, z + dz
+            if _is_build_zone(x, y, z, pad=2):
+                (x, y, z), stop_falling_or_rising = _collide((x, y, z), self.world, FACES)
+            elif not is_flying:
+                (x, y, z), stop_falling_or_rising = _collide((x, y + dy, z), self.world, FACES)
 
-        """
-        # How much overlap with a dimension of a surrounding block you need to
-        # have to count as a collision. If 0, touching terrain at all counts as
-        # a collision. If .49, you sink into the ground, as if walking through
-        # tall grass. If >= .5, you'll fall through the ground.
-        pad = Agent.PAD
-        p = list(position)
-        np = normalize(position)
-        for face in FACES:  # check all surrounding blocks
-            for i in range(3):  # check each dimension independently
-                if not face[i]:
-                    continue
-                # How much overlap you have with this dimension.
-                d = (p[i] - np[i]) * face[i]
-                if d < pad:
-                    continue
-                for dy in range(height):  # check each height
-                    op = list(np)
-                    op[1] -= dy
-                    op[i] += face[i]
-                    if tuple(op) not in self.world \
-                       and (new_blocks is None or tuple(op) not in new_blocks):
-                        continue
-                    p[i] -= (d - pad) * face[i]
-                    if face == (0, -1, 0) or face == (0, 1, 0):
-                        # You are colliding with the ground or ceiling, so stop
-                        # falling / rising.
-                        agent.dy = 0
-                    break
-        return tuple(p)
+            if stop_falling_or_rising:
+                agent_dy = 0
+
+            agent_position = (x, y, z)
+
+        return agent_position, agent_dy, agent_time_int_steps
 
     def place_or_remove_block(self, agent, remove: bool, place: bool):
-        if place and remove or not place and not remove: return
-        vector = self.get_sight_vector(agent)
-        block, previous = self.hit_test(agent.position, vector)
-        if place:
-            if previous:
-                if agent.inventory[agent.active_block - 1] > 0 and _build_zone(*previous):
-                    x, y, z = agent.position
-                    y = y - (PLAYER_HEIGHT - 1) + Agent.PAD
-                    bx, by, bz = previous
-                    bx -= 0.5
-                    bz -= 0.5
-                    if not (bx <= x <= bx + 1 and bz <= z <= bz + 1
-                       and (by <= y <= by + 1 or by <= (y + 1) <= by + 1)):
-                        self.add_block(previous, agent.active_block)
-                        agent.inventory[agent.active_block - 1] -= 1
+        if place == remove:
+            return
+
+        block, previous_block = self.hit_test(
+            agent.position, get_sight_vector(agent.rotation)
+        )
+
+        if place and previous_block:
+            self._try_place_block(agent, previous_block)
         if remove and block:
-            texture = self.world[block]
-            if texture != GREY and texture != WHITE:
-                self.remove_block(block)
-                agent.inventory[texture - 1] += 1
+            self._try_remove_block(agent, block)
+
+    def _try_place_block(self, agent, block_position: int_3d):
+        texture = agent.active_block
+        if agent.inventory[texture - 1] <= 0:
+            return
+
+        bx, by, bz = block_position
+        if not _is_build_zone(bx, by, bz):
+            return
+        agent_position = to_float_3d(agent.position)
+        if _is_agent_near(agent_position, bx, by, bz):
+            return
+
+        self.add_block(block_position, texture)
+        agent.inventory[texture - 1] -= 1
+
+    def _try_remove_block(self, agent, block_position: int_3d):
+        texture = self.world[block_position]
+        if texture == GREY or texture == WHITE:
+            return
+        self.remove_block(block_position)
+        agent.inventory[texture - 1] += 1
 
     def get_focused_block(self, agent):
-        vector = self.get_sight_vector(agent)
+        vector = get_sight_vector(agent.rotation)
         return self.hit_test(agent.position, vector)[0]
 
     @staticmethod
     def move_camera(agent, dx: float, dy: float):
-        agent.rotation = _move_camera(agent.rotation, dx, dy)
+        agent.rotation = _cycle_rotation(
+            _move_camera(agent.rotation, dx, dy)
+        )
 
     @staticmethod
     def movement(agent, strafe: tuple[int, int], dy: float, inventory: Optional[int] = None):
@@ -326,10 +276,11 @@ class World:
             if not (1 <= inventory <= 6):
                 raise ValueError(f'Bad inventory id: {inventory}')
             agent.active_block = inventory
-    ### END AGENT CONTROL
+    # ========= END AGENT CONTROL =========
 
-    ### UNIFIED AGENT CONTROL
-    def parse_walking_discrete_action(self, action):
+    # ========= UNIFIED AGENT CONTROL =========
+    @staticmethod
+    def parse_walking_discrete_action(action):
         # 0 noop; 1 forward; 2 back; 3 left; 4 right; 5 jump; 6-11 hotbar; 12 camera left;
         # 13 camera right; 14 camera up; 15 camera down; 16 attack; 17 use;
         # action = list(action).index(1)
@@ -365,7 +316,8 @@ class World:
             add = True
         return strafe, dy, inventory, camera, remove, add
 
-    def parse_walking_action(self, action):
+    @staticmethod
+    def parse_walking_action(action):
         strafe = [0,0]
         if action['forward']:
             strafe[0] += -1
@@ -385,7 +337,8 @@ class World:
         add = bool(action['use'])
         return strafe, jump, inventory, camera, remove, add
 
-    def parse_flying_action(self, action):
+    @staticmethod
+    def parse_flying_action(action):
         """
         Args:
             action: dictionary with keys:
@@ -403,7 +356,9 @@ class World:
         remove = action['placement'] == 2
         return strafe, dy, inventory, camera, remove, add
 
-    def step(self, agent, action, select_and_place=False, action_space='walking', discretize=True):
+    def step(
+            self, agent, action, select_and_place=False, action_space='walking', discretize=False
+    ):
         if action_space == 'walking':
             if discretize:
                 tup = self.parse_walking_discrete_action(action)
@@ -422,19 +377,57 @@ class World:
         self.move_camera(agent, *camera)
         self.place_or_remove_block(agent, remove=remove, place=add)
         self.update(agent, dt=1/20.)
-        yaw, pitch = agent.rotation
-        while yaw > 360.:
-            yaw -= 360.
-        while yaw < 0.0:
-            yaw += 360.0
-        agent.rotation = (yaw, pitch)
-    ### END UNIFIED AGENT CONTROL
+
+    # ========= END UNIFIED AGENT CONTROL =========
 
 
-# OPTIMIZED NUMBA IMPLEMENTATIONS
+# ========= NUMBA-OPTIMIZED IMPLEMENTATIONS =========
+@numba.jit(nopython=True, cache=True)
+def _add_initial_blocks(blocks: dict[int_3d, int]):
+    n = 18  # 1/2 width and height of world
+    s = 1  # step size
+    y = 0  # initial y height
+
+    for x in range(-n, n + 1, s):
+        for z in range(-n, n + 1, s):
+            color = GREY if not _is_build_zone(x, y, z) else WHITE
+            blocks[(x, y - 2, z)] = color
+
+
+@numba.jit(nopython=True, cache=True, inline='always')
+def _integrate_self_movement_over_time(v, dt, unit_motion_direction):
+    # distance covered over time dt along the motion direction with speed v.
+    dx, dy, dz = unit_motion_direction
+    distance = v * dt
+    return dx * distance, dy * distance, dz * distance
+
 
 @numba.jit(nopython=True, cache=True)
-def _get_sight_vector(x, y):
+def _handle_vertical_motion(agent_dy, dt) -> tuple[float, int]:
+    # Update your vertical speed: if you are falling, speed up until you
+    # hit terminal velocity; if you are jumping, slow down until you
+    # start falling.
+    agent_dy -= dt * GRAVITY
+    time_int_steps = _n_update_steps_from_falling_speed(agent_dy)
+    agent_dy = max(agent_dy, -TERMINAL_VELOCITY)
+    return agent_dy, time_int_steps
+
+
+@numba.jit(nopython=True, cache=True)
+def _n_update_steps_from_falling_speed(dy: float) -> int:
+    if dy < -14:
+        return 12
+    if dy < -10:
+        return 8
+    if dy < -5:
+        return 4
+    return 2
+
+
+@numba.jit(nopython=True, cache=True)
+def get_sight_vector(rotation: float_2d) -> float_3d:
+    """Returns the current line of sight vector indicating the direction the player is looking."""
+    x, y = rotation
     # y ranges from -90 to 90, or -pi/2 to pi/2, so m ranges from 0 to 1 and
     # is 1 when looking ahead parallel to the ground and 0 when looking
     # straight up or down.
@@ -448,7 +441,9 @@ def _get_sight_vector(x, y):
 
 
 @numba.jit(nopython=True, cache=True)
-def _get_motion_vector(agent_strafe: tuple[int, int], agent_rotation, agent_flying):
+def _get_motion_direction(
+        agent_strafe: int_2d, agent_rotation: float_2d, agent_flying: bool
+):
     """
     Returns the current motion vector indicating the velocity of the
     player: tuple containing the velocity in x, y, and z respectively.
@@ -487,7 +482,7 @@ def _get_motion_vector(agent_strafe: tuple[int, int], agent_rotation, agent_flyi
 
 
 @numba.jit(nopython=True, cache=True, inline='always')
-def _add_strafe(agent_strafe: tuple[int, int], strafe: tuple[int, int]) -> tuple[int, int]:
+def _add_strafe(agent_strafe: int_2d, strafe: int_2d) -> int_2d:
     ag_strafe_fb, ag_strafe_lr = agent_strafe
     strafe_fb, strafe_lr = strafe
     return ag_strafe_fb + strafe_fb, ag_strafe_lr + strafe_lr
@@ -502,26 +497,124 @@ def _compute_dy(agent_dy: float, dy: float, agent_flying: bool) -> float:
 
 
 @numba.jit(nopython=True, cache=True, inline='always')
-def _move_camera(agent_rotation: tuple[float, float], dx: float, dy: float) -> tuple[float, float]:
-    x, y = agent_rotation
-    x, y = x + dx, y + dy
-    y = max(-90., min(90., y))
-    return x, y
+def _move_camera(rotation: float_2d, dx: float, dy: float) -> float_2d:
+    yaw, pitch = rotation
+    yaw, pitch = yaw + dx, pitch + dy
+    pitch = max(-90., min(90., pitch))
+    return yaw, pitch
 
 
 @numba.jit(nopython=True, cache=True, inline='always')
-def _build_zone(x, y, z, pad=0):
+def _cycle_rotation(rotation):
+    yaw, pitch = rotation
+    while yaw > 360.:
+        yaw -= 360.
+    while yaw < 0.0:
+        yaw += 360.0
+    return pitch, yaw
+
+
+@numba.jit(nopython=True, cache=True, inline='always')
+def _is_build_zone(x: int, y: int, z: int, pad: int = 0) -> bool:
     return -5 - pad <= x <= 5 + pad and -5 - pad <= z <= 5 + pad and -1 - pad <= y < 8 + pad
 
 
-@numba.jit(nopython=True, cache=True)
-def _remove_block(
-        position: tuple[int, int, int], shown, callbacks, initialized, placed
+@numba.jit(nopython=True)
+def _hit_test(
+        world: dict[int_3d, int],
+        position: float_3d, vector: float_3d,
+        max_distance: int = 8
 ):
-    if position in shown:
-        shown.pop(position)
-        x, y, z = position
-        for cb in callbacks['on_remove']:
-            cb(position, build_zone=_build_zone(x, y, z))
-    if initialized:
-        placed.remove(position)
+    """
+    Line of sight search from current position. If a block is
+    intersected it is returned, along with the block previously in the line
+    of sight. If no block is found, return None, None.
+    """
+    if not world:
+        return None, None
+
+    x, y, z = position
+
+    m = 5
+    dx, dy, dz = vector
+    dx, dy, dz = dx / m, dy / m, dz / m
+
+    previous_block = None
+    for i in range(max_distance * m):
+        block = discretize_3d((x, y, z))
+        should_check = i == 0 or block != previous_block
+
+        if should_check and block in world:
+            return block, previous_block
+
+        previous_block = block
+        x, y, z = x + dx, y + dy, z + dz
+
+    return None, None
+
+
+@numba.jit(nopython=True, cache=True)
+def _is_agent_near(agent_position: float_3d, bx: int, by: int, bz: int) -> bool:
+    x, y, z = agent_position
+    y = y - (PLAYER_HEIGHT - 1.) + PLAYER_PAD
+    bx -= 0.5
+    bz -= 0.5
+    return (
+        bx <= x <= bx + 1
+        and bz <= z <= bz + 1
+        and (
+            by <= y <= by + 1
+            or by <= (y + 1) <= by + 1
+        )
+    )
+
+
+@numba.jit(nopython=True, cache=True)
+def _collide(
+        position: float_3d, world: dict[int_3d, int], faces: list[int_3d]
+) -> tuple[float_3d, bool]:
+    position = discretize_3d(position)
+
+    stop_falling_or_rising = False
+    new_position = list(position)
+    collide_candidate = list(position)
+
+    # check all surrounding blocks
+    for face_id, face in enumerate(faces):
+        # up (0, 1, 0) and down (0, -1, 0) are face_id 0 and 1 respectively (it should be!)
+        is_ground_or_ceiling = face_id <= 1
+
+        # check each dimension independently
+        for axis in range(3):
+            bound_direction = face[axis]
+            if not bound_direction:
+                # unbound axis
+                continue
+
+            # how much overlap you have with this dimension.
+            overlap = (new_position[axis] - position[axis]) * bound_direction
+            if overlap < PLAYER_PAD:
+                # you are not touching the block in this dimension.
+                continue
+
+            collide_candidate[axis] += bound_direction
+            x, y, z = collide_candidate
+            is_collided = _check_collision(x, y, z, world)
+            collide_candidate[axis] -= bound_direction
+
+            stop_falling_or_rising |= is_collided and is_ground_or_ceiling
+            if is_collided:
+                new_position[axis] -= bound_direction * (overlap - PLAYER_PAD)
+
+    x, y, z = new_position
+    return (x, y, z), stop_falling_or_rising
+
+
+@numba.jit(nopython=True, cache=True)
+def _check_collision(x, y, z, world):
+    # traverse sequentially over the height of the player
+    for _ in range(PLAYER_HEIGHT):
+        if (x, y, z) in world:
+            return True
+        y -= 1
+    return False

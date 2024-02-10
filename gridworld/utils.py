@@ -82,7 +82,7 @@ def cube_vertices(x, y, z, n, top_only=False):
 
 
 @numba.jit(nopython=True, cache=True, inline='always')
-def discretize(position: float_3d) -> int_3d:
+def discretize_3d(position: float_3d) -> int_3d:
     """ Accepts `position` of arbitrary precision and returns the block
     containing that position.
 

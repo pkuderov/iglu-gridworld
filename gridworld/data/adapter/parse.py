@@ -22,7 +22,7 @@ class ActionsParser:
         if world is None or agent is None:
             from gridworld.core import World, Agent
             world = World()
-            world._initialize()
+            world.initialize()
             agent = Agent()
             agent.flying = True
         self.init_pos = DEFAULT_POS
@@ -131,7 +131,7 @@ class ActionsParser:
             # TODO: check for the new data format
             self.agent.position = self.position.tolist()
             self.agent.rotation = self.camera.tolist()
-            vector = self.world.get_sight_vector(self.agent)
+            vector = self.world.get_sight_vector(self.agent.rotation)
             block, prev = self.world.hit_test(self.agent.position, vector, max_distance=10)
             bid, x, y, z = list(map(int, args[:4]))
             y -= VOXELWORLD_GROUND_LEVEL + 1
