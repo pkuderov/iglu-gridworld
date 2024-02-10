@@ -9,6 +9,9 @@ import gym
 import numpy as np
 from copy import copy
 
+from gridworld.extra_utils import timed
+
+
 class String(Space):
     def __init__(self, ):
         super().__init__(shape=(), dtype=np.object_)
@@ -20,15 +23,17 @@ class String(Space):
         return isinstance(obj, str)
 
 
-
-
-
 class GridWorld(Env):
     def __init__(
             self, render=True, max_steps=250, select_and_place=False,
             discretize=False, right_placement_scale=1., wrong_placement_scale=0.1,
             render_size=(64, 64), target_in_obs=False, action_space='walking', 
-            vector_state=True, fake=False, name='') -> None:
+            vector_state=True, fake=False, name=''
+    ):
+
+        self.elapsed_time = 0.
+        self.n_computes = 0
+
         self.agent = Agent(sustain=False)
         self.world = World()
         self.grid = np.zeros((9, 11, 11), dtype=np.int32)
@@ -105,14 +110,16 @@ class GridWorld(Env):
                 # workaround
                 div = 2
             else:
-                div = 1                
-            self.renderer = Renderer(self.world, self.agent,
-                                     width=self.render_size[0] // div, height=self.render_size[1] // div,
-                                     caption='Pyglet', resizable=False)
+                div = 1
+            self.renderer = Renderer(
+                self.world, self.agent,
+                width=self.render_size[0] // div, height=self.render_size[1] // div,
+                caption='Pyglet', resizable=False
+            )
             setup()
         else:
             self.renderer = None
-            self.world._initialize()
+            self.world.initialize()
 
     def enable_renderer(self):
         if self.renderer is None and not self.fake:
@@ -124,12 +131,14 @@ class GridWorld(Env):
                 # workaround
                 div = 2
             else:
-                div = 1     
+                div = 1
             self.reset()
-            self.world.deinit()
-            self.renderer = Renderer(self.world, self.agent,
-                                     width=self.render_size[0] // div, height=self.render_size[1] // div,
-                                     caption='Pyglet', resizable=False)
+            self.world.reset()
+            self.renderer = Renderer(
+                self.world, self.agent,
+                width=self.render_size[0] // div, height=self.render_size[1] // div,
+                caption='Pyglet', resizable=False
+            )
             setup()
             self.do_render = True
 
@@ -184,12 +193,6 @@ class GridWorld(Env):
         )
         self.initial_position = tuple(initial_poisition[:3])
         self.initial_rotation = tuple(initial_poisition[3:])
-        self.reset()
-
-    def deinitialize_world(self):
-        self._overwrite_starting_grid = None
-        self.initial_position = (0, 0, 0)
-        self.initial_rotation = (0, 0)
         self.reset()
 
     @property
@@ -260,9 +263,25 @@ class GridWorld(Env):
             obs['pov'] = self.observation_space['pov'].sample()
         return obs
 
-    def render(self,):
+    def render(self, *_, **__):
+        result, elapsed_time = self._render()
+
+        self.elapsed_time += elapsed_time
+        self.n_computes += 1
+
+        if self.n_computes == 1000:
+            dt = self.elapsed_time
+            print(f'Run time (render): {1 / dt:.2f} kFPS')
+            self.elapsed_time = 0.
+            self.n_computes = 0
+
+        return result
+
+    @timed
+    def _render(self, *_, **__):
         if not self.do_render:
             raise ValueError('create env with render=True')
+
         return self.renderer.render()
 
     def step(self, action):
