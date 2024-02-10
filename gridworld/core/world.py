@@ -511,7 +511,7 @@ def _cycle_rotation(rotation):
         yaw -= 360.
     while yaw < 0.0:
         yaw += 360.0
-    return pitch, yaw
+    return yaw, pitch
 
 
 @numba.jit(nopython=True, cache=True, inline='always')
