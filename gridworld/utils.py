@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import math
 import numba
+from numba.typed.typedlist import List
 
 TICKS_PER_SEC = 60000
 
@@ -24,6 +27,11 @@ JUMP_SPEED = math.sqrt(2 * GRAVITY * MAX_JUMP_HEIGHT)
 TERMINAL_VELOCITY = 50
 
 PLAYER_HEIGHT = 2
+
+int_2d = tuple[int, int]
+int_3d = tuple[int, int, int]
+float_2d = tuple[float, float]
+float_3d = tuple[float, float, float]
 
 
 @numba.jit(nopython=True, cache=True, inline='always')
@@ -72,8 +80,9 @@ def cube_vertices(x, y, z, n, top_only=False):
         x + n, y + n, z - n,
     ]
 
-@numba.jit
-def normalize(position: tuple[float, float, float]) -> tuple[int, int, int]:
+
+@numba.jit(nopython=True, cache=True, inline='always')
+def discretize(position: float_3d) -> int_3d:
     """ Accepts `position` of arbitrary precision and returns the block
     containing that position.
 
@@ -89,6 +98,18 @@ def normalize(position: tuple[float, float, float]) -> tuple[int, int, int]:
     x, y, z = position
     x, y, z = round(x), round(y), round(z)
     return x, y, z
+
+
+def to_int_3d(position: tuple | list) -> int_3d:
+    # use this to make tuple of homogeneous int type in case it's np.int64 for example
+    x, y, z = position
+    return int(x), int(y), int(z)
+
+
+def to_float_3d(position: tuple | list) -> float_3d:
+    # use this to make tuple of homogeneous float type in case it's np.float64 for example
+    x, y, z = position
+    return float(x), float(y), float(z)
 
 
 @numba.jit(nopython=True, cache=True)
@@ -148,17 +169,17 @@ def texture_coordinates(x: int, y: int, top_only: bool, split: bool) -> list[flo
 
 
 @numba.jit(nopython=True)
-def _tex_coords(x: int, y: int):
+def _texture_coordinates_default(x: int, y: int):
     return texture_coordinates(x, y, False, False)
 
 
 @numba.jit(nopython=True)
-def _tex_coords_split(x: int, y: int):
+def _texture_coordinates_split(x: int, y: int):
     return texture_coordinates(x, y, False, True)
 
 
 @numba.jit(nopython=True)
-def _tex_coords_top(x: int, y: int):
+def _texture_coordinates_top(x: int, y: int):
     return texture_coordinates(x, y, True, False)
 
 
@@ -172,35 +193,37 @@ PURPLE = 5
 YELLOW = 6
 
 id2texture = {
-    WHITE: _tex_coords(0, 0),
-    GREY: _tex_coords(1, 0),
-    BLUE: _tex_coords_split(2, 0),
-    GREEN: _tex_coords_split(3, 0),
-    RED: _tex_coords_split(0, 1),
-    ORANGE: _tex_coords_split(1, 1),
-    PURPLE: _tex_coords_split(2, 1),
-    YELLOW: _tex_coords_split(3, 1)
+    WHITE: _texture_coordinates_default(0, 0),
+    GREY: _texture_coordinates_default(1, 0),
+    BLUE: _texture_coordinates_split(2, 0),
+    GREEN: _texture_coordinates_split(3, 0),
+    RED: _texture_coordinates_split(0, 1),
+    ORANGE: _texture_coordinates_split(1, 1),
+    PURPLE: _texture_coordinates_split(2, 1),
+    YELLOW: _texture_coordinates_split(3, 1)
 }
 
 id2top_texture = {
-    WHITE: _tex_coords_top(0, 0),
-    GREY: _tex_coords_top(1, 0),
-    BLUE: _tex_coords_top(2, 0),
-    GREEN: _tex_coords_top(3, 0),
-    RED: _tex_coords_top(0, 1),
-    ORANGE: _tex_coords_top(1, 1),
-    PURPLE: _tex_coords_top(2, 1),
-    YELLOW: _tex_coords_top(3, 1)
+    WHITE: _texture_coordinates_top(0, 0),
+    GREY: _texture_coordinates_top(1, 0),
+    BLUE: _texture_coordinates_top(2, 0),
+    GREEN: _texture_coordinates_top(3, 0),
+    RED: _texture_coordinates_top(0, 1),
+    ORANGE: _texture_coordinates_top(1, 1),
+    PURPLE: _texture_coordinates_top(2, 1),
+    YELLOW: _texture_coordinates_top(3, 1)
 }
 
-FACES = [
+# The six cardinal directions: up, down, north, south, east, west.
+# NB: The order of the directions is important.
+FACES = List([
     (0, 1, 0),
     (0, -1, 0),
     (-1, 0, 0),
     (1, 0, 0),
     (0, 0, 1),
     (0, 0, -1),
-]
+])
 
 BUILD_ZONE_SIZE_X = 11
 BUILD_ZONE_SIZE_Z = 11

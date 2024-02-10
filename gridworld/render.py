@@ -58,7 +58,7 @@ class Renderer(Window):
         self.cube_vertices_cache = {}
 
         # noinspection PyProtectedMember
-        self.model._initialize()
+        self.model.initialize()
         self.buffer_manager = pyglet.image.get_buffer_manager()
         self.last_frame_dt = 0
         self.realtime_rendering = os.environ.get('IGLU_RENDER_REALTIME', '0') == '1'
@@ -169,6 +169,7 @@ class Renderer(Window):
     def draw_focused_block(self):
         """ Draw black edges around the block that is currently under the crosshairs."""
         assert False, 'Optimize this method.'
+        # noinspection PyUnreachableCode
         block = self.model.get_focused_block(self.agent)
         if block:
             x, y, z = block

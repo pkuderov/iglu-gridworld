@@ -1,20 +1,18 @@
-import sys
-
-from gridworld.examples.dataset_iterator import DATASET_VERSION
-sys.path.insert(0, '../')
-from gridworld import GridWorld
-from gridworld.data.iglu_dataset import IGLUDataset
-from gridworld.tasks import DUMMY_TASK
-from tqdm import tqdm
-from PIL import Image
-from PIL import ImageDraw, ImageFont
-import numpy as np
-import os
-import pickle
 import math
+import os
+import sys
 import textwrap
+
 import cv2
 import gym
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont
+from tqdm import tqdm
+
+sys.path.insert(0, '../')
+from gridworld.data.iglu_dataset import IGLUDataset
+from gridworld.tasks import DUMMY_TASK
+
 render_size = (640, 640)
 
 rendered_texts = {}
