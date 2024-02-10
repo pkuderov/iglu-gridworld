@@ -140,11 +140,7 @@ class Renderer(Window):
     def add_block(self, position, texture_id, **_):
         x, y, z = position
         top_only = texture_id == WHITE or texture_id == GREY
-
-        if top_only:
-            texture = id2top_texture[texture_id]
-        else:
-            texture = id2texture[texture_id]
+        texture = id2top_texture[texture_id] if top_only else id2texture[texture_id]
 
         cube_vertex_key = (x, y, z, top_only)
         vertex_data = self.cube_vertices_cache.get(cube_vertex_key, None)
