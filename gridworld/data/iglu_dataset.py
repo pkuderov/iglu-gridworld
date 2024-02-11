@@ -425,8 +425,10 @@ class SingleTurnIGLUDataset(IGLUDataset):
         with ZipFile(path) as zfile:
             zfile.extractall(data_path)
 
-    def create_task(self, previous_chat, initial_grid, target_grid,
-                    last_instruction):
+    def create_task(
+            self, previous_chat, initial_grid, target_grid, last_instruction
+    ):
+        target_grid = np.array((len(target_grid), 4), dtype=int)
         task = Task(
             chat=previous_chat,
             target_grid=Tasks.to_dense(target_grid),

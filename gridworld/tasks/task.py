@@ -1,9 +1,37 @@
 import numba
 import numpy as np
+import numpy.typing as npt
+from gridworld.utils import int_2d
 
 BUILD_ZONE_SIZE_X = 11
 BUILD_ZONE_SIZE_Z = 11
 BUILD_ZONE_SIZE = 9, 11, 11
+
+
+@numba.jit(nopython=True, cache=True)
+def _fill_grid_rotations(grid: npt.NDArray[int], prev_grid: npt.NDArray[int]) -> npt.NDArray[int]:
+    for x in range(BUILD_ZONE_SIZE_X):
+        for z in range(BUILD_ZONE_SIZE_Z):
+            grid[:, z, BUILD_ZONE_SIZE_X - x - 1] = prev_grid[:, x, z]
+    return grid
+
+
+@numba.jit(nopython=True, cache=True)
+def _get_admissible_points(grid: npt.NDArray[int], size: int) -> list[int_2d]:
+    # (dx, dz) is admissible iff the translation of target grid by (dx, dz)
+    # preserve (== doesn't cut) target structure within original (not shifted) target grid
+    admissible = []
+    for dx in range(-BUILD_ZONE_SIZE_X + 1, BUILD_ZONE_SIZE_X):
+        low_dx = max(dx, 0)
+        high_dx = BUILD_ZONE_SIZE_X + min(dx, 0)
+
+        for dz in range(-BUILD_ZONE_SIZE_Z + 1, BUILD_ZONE_SIZE_Z):
+            low_dz = max(dz, 0)
+            high_dz = BUILD_ZONE_SIZE_Z + min(dz, 0)
+            sls = grid[:, low_dx:high_dx, low_dz:high_dz]
+            if np.sum(sls != 0) == size:
+                admissible.append((dx, dz))
+    return admissible
 
 
 class Task:
@@ -17,7 +45,7 @@ class Task:
         Parameters
         ----------
         chat : str
-            Contatenation of all past utterances
+            Concatenation of all past utterances
         target_grid : numpy.array
             dense representation of the target
         last_instruction : string, optional
@@ -35,45 +63,41 @@ class Task:
         self.starting_grid = starting_grid
         self.last_instruction = last_instruction
         self.full_grid = full_grid
-        self.admissible = [[] for _ in range(4)]
         self.target_size = (target_grid != 0).sum().item()
         self.full_size = self.target_size
         if full_grid is not None:
             self.full_size = (full_grid != 0).sum().item()
         self.target_grid = target_grid
-        self.target_grids = [target_grid]
-        full_grids = [full_grid]
         self.max_int = 0
         self.prev_grid_size = 0
         self.right_placement = 0
         self.wrong_placement = 0
+
+        self.target_grids = [target_grid]
         # fill self.target_grids with four rotations of the original grid around the vertical axis
         for _ in range(3):
-            self.target_grids.append(np.zeros(target_grid.shape, dtype=int))
-            full_grids.append(np.zeros(target_grid.shape, dtype=int))
-            for x in range(BUILD_ZONE_SIZE_X):
-                for z in range(BUILD_ZONE_SIZE_Z):
-                    self.target_grids[-1][:, z, BUILD_ZONE_SIZE_X - x - 1] \
-                        = self.target_grids[-2][:, x, z]
-                    if full_grid is not None:
-                        full_grids[-1][:, z, BUILD_ZONE_SIZE_X - x - 1] \
-                            = full_grids[-2][:, x, z]
-        # (dx, dz) is admissible iff the translation of target grid by (dx, dz) preserve (== doesn't cut)
-        # target structure within original (unshifted) target grid
+            self.target_grids.append(_fill_grid_rotations(
+                np.zeros(target_grid.shape, dtype=int), self.target_grids[-1]
+            ))
+
+        full_grids = None
+        if full_grid is not None:
+            full_grids = [full_grid]
+            for _ in range(3):
+                full_grids.append(_fill_grid_rotations(
+                    np.zeros(target_grid.shape, dtype=int), full_grids[-1]
+                ))
+
         if not invariant:
-            self.admissible = [[(0,0)]]
+            self.admissible = [[(0, 0)]]
         else:
-            for i in range(4):
-                if full_grid is not None:
-                    grid = full_grids[i]
-                else:
-                    grid = self.target_grids[i]
-                for dx in range(-BUILD_ZONE_SIZE_X + 1, BUILD_ZONE_SIZE_X):
-                    for dz in range(-BUILD_ZONE_SIZE_Z + 1, BUILD_ZONE_SIZE_Z):
-                        sls_target = grid[:, max(dx, 0):BUILD_ZONE_SIZE_X + min(dx, 0),
-                                            max(dz, 0):BUILD_ZONE_SIZE_Z + min(dz, 0):]
-                        if (sls_target != 0).sum().item() == self.full_size:
-                            self.admissible[i].append((dx, dz))
+            self.admissible = [
+                _get_admissible_points(
+                    full_grids[i] if full_grids is not None else self.target_grids[i],
+                    self.full_size
+                )
+                for i in range(4)
+            ]
 
     def reset(self):
         """
@@ -88,21 +112,6 @@ class Task:
         self.right_placement = 0
         self.wrong_placement = 0
         return self
-
-    # placeholder methods for uniformity with Tasks class
-    ###
-    def __len__(self):
-        return 1
-
-    def __iter__(self):
-        yield self
-    ###
-
-    def __repr__(self) -> str:
-        instruction = self.last_instruction \
-            if len(self.last_instruction) < 20 \
-            else self.last_instruction[:20] + '...'
-        return f"Task(instruction={instruction})"
 
     def step_intersection(self, grid):
         """
@@ -125,9 +134,9 @@ class Task:
 
     def argmax_intersection(self, grid):
         max_int, argmax = 0, (0, 0, 0)
-        for i, admissible in enumerate(self.admissible):
-            for dx, dz in admissible:
-                intersection = get_intersection(self.target_grids[i], grid, dx, dz)
+        for i in range(len(self.admissible)):
+            for dx, dz in self.admissible[i]:
+                intersection = _get_intersection(self.target_grids[i], grid, dx, dz)
                 if intersection > max_int:
                     max_int = intersection
                     argmax = (dx, dz, i)
@@ -135,16 +144,31 @@ class Task:
 
     def maximal_intersection(self, grid):
         max_int = 0
-        for i, admissible in enumerate(self.admissible):
-            for dx, dz in admissible:
-                intersection = get_intersection(self.target_grids[i], grid, dx, dz)
+        for i in range(len(self.admissible)):
+            for dx, dz in self.admissible[i]:
+                intersection = _get_intersection(self.target_grids[i], grid, dx, dz)
                 if intersection > max_int:
                     max_int = intersection
         return max_int
 
+    # placeholder methods for uniformity with Tasks class
+    ###
+    def __len__(self):
+        return 1
+
+    def __iter__(self):
+        yield self
+    ###
+
+    def __repr__(self) -> str:
+        instruction = self.last_instruction \
+            if len(self.last_instruction) < 20 \
+            else self.last_instruction[:20] + '...'
+        return f"Task(instruction={instruction})"
+
 
 @numba.jit(nopython=True, cache=True)
-def get_intersection(target_grid, grid, dx, dz):
+def _get_intersection(target_grid, grid, dx, dz):
     x_sls = slice(max(dx, 0), BUILD_ZONE_SIZE_X + min(dx, 0))
     z_sls = slice(max(dz, 0), BUILD_ZONE_SIZE_Z + min(dz, 0))
     sls_target = target_grid[:, x_sls, z_sls]
@@ -155,30 +179,54 @@ def get_intersection(target_grid, grid, dx, dz):
     return ((sls_target == sls_grid) & (sls_target != 0)).sum()
 
 
+@numba.jit(nopython=True, cache=True)
+def _to_dense(grid, blocks):
+    zone_x = BUILD_ZONE_SIZE_X // 2
+    zone_z = BUILD_ZONE_SIZE_Z // 2
+    for block in blocks:
+        x, y, z, block_id = block
+        grid[y + 1, x + zone_x, z + zone_z] = block_id
+    return grid
+
+
+@numba.jit(nopython=True, cache=True)
+def _to_sparse(blocks):
+    zone_x = BUILD_ZONE_SIZE_X // 2
+    zone_z = BUILD_ZONE_SIZE_Z // 2
+
+    idx = blocks.nonzero()
+    n_blocks = len(idx[0])
+    new_blocks = np.empty((n_blocks, 4), dtype=int)
+    for i in range(n_blocks):
+        # TODO: this is an exact copy of the original code, but it is not clear
+        # if the order of axes is correct (possible order in blocks: yxz)
+        x, y, z = idx[0][i], idx[1][i], idx[2][i]
+        new_blocks[i, :] = (x - zone_x, y - 1, z - zone_z, blocks[x, y, z])
+    return new_blocks
+
+
 class Tasks:
     """
     Represents many tasks where one can be active
     """
     @classmethod
     def to_dense(cls, blocks):
-        if isinstance(blocks, (list, tuple)):
-            if all(isinstance(b, (list, tuple)) for b in blocks):
-                grid = np.zeros(BUILD_ZONE_SIZE, dtype=int)
-                for x, y, z, block_id in blocks:
-                    grid[y + 1, x + BUILD_ZONE_SIZE_X // 2, z + BUILD_ZONE_SIZE_Z // 2] = block_id
-                blocks = grid
+        is_list = isinstance(blocks, (list, tuple))
+        is_arr = isinstance(blocks, np.ndarray) and blocks.shape[1] == 4
+
+        if is_arr or is_list:
+            grid = np.zeros(BUILD_ZONE_SIZE, dtype=int)
+            if len(blocks) > 0:
+                if is_list:
+                    blocks = np.array(blocks, dtype=int)
+                grid = _to_dense(grid, blocks)
+            blocks = grid
         return blocks
 
     @classmethod
     def to_sparse(cls, blocks):
-        if isinstance(blocks, np.ndarray):
-            idx = blocks.nonzero()
-            types = [blocks[i] for i in zip(*idx)]
-            blocks = [(*i, t) for *i, t in zip(*idx, types)]
-            new_blocks = []
-            for x, y, z, bid in blocks:
-                new_blocks.append((x - BUILD_ZONE_SIZE_X // 2, y - 1, z - BUILD_ZONE_SIZE_Z // 2, bid))
-            blocks = new_blocks
+        if isinstance(blocks, np.ndarray) and blocks.shape[1] != 4:
+            blocks = _to_sparse(blocks)
         return blocks
 
     def reset(self) -> Task:
@@ -223,7 +271,7 @@ class Subtasks(Tasks):
     def reset(self):
         """
         Randomly selects a random task within the task sequence.
-        Each task is sampled with some non-trilial context (prior dialogs and
+        Each task is sampled with some non-trivial context (prior dialogs and
         starting structure) and one utterance goal instruction
         """
         if self.next is None:
@@ -289,7 +337,8 @@ class Subtasks(Tasks):
             self.task_goal += 1
             self.current = self.create_task(self.task_start, self.task_goal)
             self.current.prev_grid_size = 0
-            _, _, done = self.current.step_intersection(grid) # to initialize things properly
+            # to initialize things properly
+            _, _, done = self.current.step_intersection(grid)
         return right_placement, wrong_placement, done
 
     def set_task(self, task_id):
