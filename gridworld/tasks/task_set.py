@@ -134,7 +134,7 @@ class RandomTasks(Tasks):
 
     def sample_task(self):
         chat = ''
-        target_grid = np.zeros(BUILD_ZONE_SIZE, dtype=np.int32)
+        target_grid = np.zeros(BUILD_ZONE_SIZE, dtype=int)
         for height in range(self.height_levels):
             shape = target_grid[height].shape
             block_x = np.random.choice(BUILD_ZONE_SIZE_X)

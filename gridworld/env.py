@@ -1,15 +1,14 @@
 import warnings
-import os
+
+import gym
+import numba
+import numpy as np
+from gym import Env, Wrapper as gymWrapper
+from gym.spaces import Dict, Box, Discrete, Space
+
 from gridworld.core.world import Agent, World
 from gridworld.tasks.task import Task, Tasks
-
-from gym.spaces import Dict, Box, Discrete, Space
-from gym import Env, Wrapper as gymWrapper
-import gym
-import numpy as np
-from copy import copy
-
-from gridworld.extra_utils import timed
+from gridworld.utils import int_3d
 
 
 class String(Space):
@@ -24,19 +23,17 @@ class String(Space):
 
 
 class GridWorld(Env):
+    observation_space: Dict
+
     def __init__(
             self, render=True, max_steps=250, select_and_place=False,
             discretize=False, right_placement_scale=1., wrong_placement_scale=0.1,
             render_size=(64, 64), target_in_obs=False, action_space='walking', 
             vector_state=True, fake=False, name=''
     ):
-        self.print_fps = os.environ.get('IGLU_DEBUG_FPS', '0') == '1'
-        self.elapsed_time = 0.
-        self.n_computes = 0
-
         self.agent = Agent(sustain=False)
         self.world = World()
-        self.grid = np.zeros((9, 11, 11), dtype=np.int32)
+        self.grid = np.zeros((9, 11, 11), dtype=int)
         self._task = None
         self._task_generator = None
         self.step_no = 0
@@ -75,29 +72,35 @@ class GridWorld(Env):
                 })
         elif action_space == 'flying':
             self.action_space = Dict({
-                'movement': Box(low=-1, high=1, shape=(3,), dtype=np.float32),
-                'camera': Box(low=-5, high=5, shape=(2,), dtype=np.float32),
+                'movement': Box(low=-1, high=1, shape=(3,), dtype=float),
+                'camera': Box(low=-5, high=5, shape=(2,), dtype=float),
                 'inventory': Discrete(7),
                 'placement': Discrete(3),
             })
             self.agent.flying = True
-        self.observation_space = {
-            'inventory': Box(low=0, high=20, shape=(6,), dtype=np.float32),
-            'compass': Box(low=-180, high=180, shape=(1,), dtype=np.float32),
+
+        observation_space = {
+            'inventory': Box(low=0, high=20, shape=(6,), dtype=float),
+            'compass': Box(low=-180, high=180, shape=(1,), dtype=float),
             'dialog': String()
         }
         if vector_state:
-            self.observation_space['agentPos'] = Box(
-                low=np.array([-8, -2, -8, -90, 0], dtype=np.float32),
-                high=np.array([8, 12, 8, 90, 360], dtype=np.float32),
+            observation_space['agentPos'] = Box(
+                low=np.array([-8, -2, -8, -90, 0], dtype=float),
+                high=np.array([8, 12, 8, 90, 360], dtype=float),
                 shape=(5,)
             )
-            self.observation_space['grid'] = Box(low=-1, high=7, shape=(9, 11, 11), dtype=np.int32)
+            observation_space['grid'] = Box(low=-1, high=7, shape=(9, 11, 11), dtype=int)
         if target_in_obs:
-            self.observation_space['target_grid'] = Box(low=-1, high=7, shape=(9, 11, 11), dtype=np.int32)
+            observation_space['target_grid'] = Box(
+                low=-1, high=7, shape=(9, 11, 11), dtype=int
+            )
         if render:
-            self.observation_space['pov'] = Box(low=0, high=255, shape=(*self.render_size, 3), dtype=np.uint8)
-        self.observation_space = Dict(self.observation_space)
+            observation_space['pov'] = Box(
+                low=0, high=255, shape=(*self.render_size, 3), dtype=np.uint8
+            )
+
+        self.observation_space = Dict(observation_space)
         self.max_int = 0
         self.name = name
         self.do_render = render
@@ -144,21 +147,17 @@ class GridWorld(Env):
 
     def _add_block(self, position, kind, build_zone=True):
         if self.world.initialized and build_zone:
-            x, y, z = position
-            x += 5
-            z += 5
-            y += 1
+            x, y, z = _to_grid_space(position)
             self.grid[y, x, z] = kind
 
     def _remove_block(self, position, build_zone=True):
         if self.world.initialized and build_zone:
-            x, y, z = position
-            x += 5
-            z += 5
-            y += 1
+            x, y, z = _to_grid_space(position)
             if self.grid[y, x, z] == 0:
-                raise ValueError(f'Removal of non-existing block. address: y={y}, x={x}, z={z}; '
-                                 f'grid state: {self.grid.nonzero()[0]};')
+                raise ValueError(
+                    f'Removal of non-existing block. address: y={y}, x={x}, z={z}; '
+                    f'grid state: {self.grid.nonzero()[0]};'
+                )
             self.grid[y, x, z] = 0
 
     def set_task(self, task: Task):
@@ -206,7 +205,7 @@ class GridWorld(Env):
             self.starting_grid = self._task.starting_grid
         return self._task
 
-    def reset(self):
+    def reset(self, **_):
         if self._task is None:
             if self._task_generator is None:
                 raise ValueError('Task is not initialized! Initialize task before working with'
@@ -248,15 +247,15 @@ class GridWorld(Env):
             for _, _, _, color in self.starting_grid:
                 self.agent.inventory[color - 1] -= 1
         obs = {
-            'inventory': np.array(self.agent.inventory, dtype=np.float32),
-            'compass': np.array([0.], dtype=np.float32),
+            'inventory': np.array(self.agent.inventory, dtype=float),
+            'compass': np.array([0.], dtype=float),
             'dialog': self._task.chat
         }
         if self.vector_state:
-            obs['grid'] = self.grid.copy().astype(np.int32)
-            obs['agentPos'] = np.array([0., 0., 0., 0., 0.], dtype=np.float32)
+            obs['grid'] = self.grid.copy()
+            obs['agentPos'] = np.array([0., 0., 0., 0., 0.], dtype=float)
         if self.target_in_obs:
-            obs['target_grid'] = self._task.target_grid.copy().astype(np.int32)
+            obs['target_grid'] = self._task.target_grid.copy()
         if self.do_render and not self.fake:
             obs['pov'] = self.render()[..., :-1]
         elif self.do_render:
@@ -264,21 +263,6 @@ class GridWorld(Env):
         return obs
 
     def render(self, *_, **__):
-        result, elapsed_time = self._render()
-
-        self.elapsed_time += elapsed_time
-        self.n_computes += 1
-
-        if self.print_fps and self.n_computes >= 1000:
-            dt = self.elapsed_time
-            print(f'Run time (render): {1 / dt:.2f} kFPS')
-            self.elapsed_time = 0.
-            self.n_computes = 0
-
-        return result
-
-    @timed
-    def _render(self, *_, **__):
         if not self.do_render:
             raise ValueError('create env with render=True')
 
@@ -293,33 +277,51 @@ class GridWorld(Env):
             else:
                 raise ValueError('Task is not initialized! Run .reset() first.')
         self.step_no += 1
+
         self.world.step(
             self.agent, action, select_and_place=self.select_and_place,
             action_space=self.action_space_type, discretize=self.discretize
         )
+
         x, y, z = self.agent.position
         yaw, pitch = self.agent.rotation
-        obs = {}
-        obs['inventory'] = np.array(copy(self.agent.inventory), dtype=np.float32)
-        obs['compass'] = np.array([yaw - 180.,], dtype=np.float32)
-        obs['dialog'] = self._task.chat
+
+        obs = {
+            'inventory': np.array(self.agent.inventory, dtype=float, copy=True),
+            'compass': np.array([yaw - 180., ], dtype=float),
+            'dialog': self._task.chat
+        }
+
         if self.vector_state:
-            obs['grid'] = self.grid.copy().astype(np.int32)
-            obs['agentPos'] = np.array([x, y, z, pitch, yaw], dtype=np.float32)    
-        synthetic_grid = self.grid - self._synthetic_init_grid
-        right_placement, wrong_placement, done = self._synthetic_task.step_intersection(synthetic_grid)
-        done = done or (self.step_no == self.max_steps)
-        if right_placement == 0:
-            reward = wrong_placement * self.wrong_placement_scale
-        else:
-            reward = right_placement * self.right_placement_scale
+            obs['grid'] = self.grid.copy()
+            obs['agentPos'] = np.array([x, y, z, pitch, yaw], dtype=float)
+
+        terminated, reward = self.calculate_progress()
+        truncated = self.step_no == self.max_steps
+        done = terminated or truncated
+
         if self.target_in_obs:
-            obs['target_grid'] = self._task.target_grid.copy().astype(np.int32)
+            obs['target_grid'] = self._task.target_grid.copy()
         if self.do_render and not self.fake:
             obs['pov'] = self.render()[..., :-1]
         elif self.do_render:
             obs['pov'] = self.observation_space['pov'].sample()
         return obs, reward, done, {}
+
+    def calculate_progress(self):
+        synthetic_grid = self.grid - self._synthetic_init_grid
+        n_correct, n_incorrect, done = self._synthetic_task.step_intersection(synthetic_grid)
+        if n_correct == 0:
+            reward = n_incorrect * self.wrong_placement_scale
+        else:
+            reward = n_correct * self.right_placement_scale
+        return done, reward
+
+
+@numba.jit(nopython=True, cache=True, inline='always')
+def _to_grid_space(pos_3d: int_3d) -> int_3d:
+    x, y, z = pos_3d
+    return x + 5, y + 1, z + 5
 
 
 class Wrapper(gymWrapper):
@@ -332,29 +334,31 @@ class Wrapper(gymWrapper):
         else:
             return self.env.render(mode, **kwargs)
 
+
 class SizeReward(Wrapper):
-  def __init__(self, env):
-    super().__init__(env)
-    self.size = 0
+    def __init__(self, env):
+        super().__init__(env)
+        self.size = 0
 
-  def reset(self):
-    self.size = 0
-    return super().reset()
+    def reset(self):
+        self.size = 0
+        return super().reset()
 
-  def step(self, action):
-    obs, reward, done, info = super().step(action)
-    intersection = self.unwrapped.max_int
-    reward = max(intersection, self.size) - self.size
-    self.size = max(intersection, self.size)
-    reward += min(self.unwrapped.wrong_placement * 0.02, 0)
-    return obs, reward, done, info
+    def step(self, action):
+        obs, reward, done, info = super().step(action)
+        intersection = self.unwrapped.max_int
+        reward = max(intersection, self.size) - self.size
+        self.size = max(intersection, self.size)
+        reward += min(self.unwrapped.wrong_placement * 0.02, 0)
+        return obs, reward, done, info
+
 
 def create_env(
         render=True, discretize=True, size_reward=True, select_and_place=True,
         right_placement_scale=1, render_size=(64, 64), target_in_obs=False,
         vector_state=False, max_steps=250, action_space='walking',
         wrong_placement_scale=0.1, name='', fake=False
-    ):
+):
     env = GridWorld(
         render=render, select_and_place=select_and_place,
         discretize=discretize, right_placement_scale=right_placement_scale,
@@ -367,6 +371,7 @@ def create_env(
         env = SizeReward(env)
     # env = Actions(env)
     return env
+
 
 gym.envs.register(
      id='IGLUGridworld-v0',

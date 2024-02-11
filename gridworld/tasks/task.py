@@ -1,3 +1,4 @@
+import numba
 import numpy as np
 
 BUILD_ZONE_SIZE_X = 11
@@ -6,7 +7,10 @@ BUILD_ZONE_SIZE = 9, 11, 11
 
 
 class Task:
-    def __init__(self, chat, target_grid, last_instruction=None, starting_grid=None, full_grid=None, invariant=True):
+    def __init__(
+            self, chat, target_grid, last_instruction=None, starting_grid=None,
+            full_grid=None, invariant=True
+    ):
         """Creates a new Task represented with the past dialog and grid,
         the new instruction and target grid after completing the instruction.
 
@@ -45,8 +49,8 @@ class Task:
         self.wrong_placement = 0
         # fill self.target_grids with four rotations of the original grid around the vertical axis
         for _ in range(3):
-            self.target_grids.append(np.zeros(target_grid.shape, dtype=np.int32))
-            full_grids.append(np.zeros(target_grid.shape, dtype=np.int32))
+            self.target_grids.append(np.zeros(target_grid.shape, dtype=int))
+            full_grids.append(np.zeros(target_grid.shape, dtype=int))
             for x in range(BUILD_ZONE_SIZE_X):
                 for z in range(BUILD_ZONE_SIZE_Z):
                     self.target_grids[-1][:, z, BUILD_ZONE_SIZE_X - x - 1] \
@@ -110,9 +114,10 @@ class Task:
         grid_size = (grid != 0).sum().item()
         wrong_placement = (self.prev_grid_size - grid_size)
         max_int = self.maximal_intersection(grid) if wrong_placement != 0 else self.max_int
-        done = max_int == self.target_size
-        self.prev_grid_size = grid_size
         right_placement = (max_int - self.max_int)
+        done = max_int == self.target_size
+
+        self.prev_grid_size = grid_size
         self.max_int = max_int
         self.right_placement = right_placement
         self.wrong_placement = wrong_placement
@@ -122,43 +127,33 @@ class Task:
         max_int, argmax = 0, (0, 0, 0)
         for i, admissible in enumerate(self.admissible):
             for dx, dz in admissible:
-                x_sls = slice(max(dx, 0), BUILD_ZONE_SIZE_X + min(dx, 0))
-                z_sls = slice(max(dz, 0), BUILD_ZONE_SIZE_Z + min(dz, 0))
-                sls_target = self.target_grids[i][:, x_sls, z_sls]
-
-                x_sls = slice(max(-dx, 0), BUILD_ZONE_SIZE_X + min(-dx, 0))
-                z_sls = slice(max(-dz, 0), BUILD_ZONE_SIZE_Z + min(-dz, 0))
-                sls_grid = grid[:, x_sls, z_sls]
-                intersection = ((sls_target == sls_grid) & (sls_target != 0)).sum().item()
+                intersection = get_intersection(self.target_grids[i], grid, dx, dz)
                 if intersection > max_int:
                     max_int = intersection
-                    argmax =(dx, dz, i)
+                    argmax = (dx, dz, i)
         return argmax
-
-    def get_intersection(self, grid, dx, dz, rot):
-        x_sls = slice(max(dx, 0), BUILD_ZONE_SIZE_X + min(dx, 0))
-        z_sls = slice(max(dz, 0), BUILD_ZONE_SIZE_Z + min(dz, 0))
-        sls_target = self.target_grids[rot][:, x_sls, z_sls]
-        x_sls = slice(max(-dx, 0), BUILD_ZONE_SIZE_X + min(-dx, 0))
-        z_sls = slice(max(-dz, 0), BUILD_ZONE_SIZE_Z + min(-dz, 0))
-        sls_grid = grid[:, x_sls, z_sls]
-        return ((sls_target == sls_grid) & (sls_target != 0)).sum().item()
 
     def maximal_intersection(self, grid):
         max_int = 0
         for i, admissible in enumerate(self.admissible):
             for dx, dz in admissible:
-                x_sls = slice(max(dx, 0), BUILD_ZONE_SIZE_X + min(dx, 0))
-                z_sls = slice(max(dz, 0), BUILD_ZONE_SIZE_Z + min(dz, 0))
-                sls_target = self.target_grids[i][:, x_sls, z_sls]
-
-                x_sls = slice(max(-dx, 0), BUILD_ZONE_SIZE_X + min(-dx, 0))
-                z_sls = slice(max(-dz, 0), BUILD_ZONE_SIZE_Z + min(-dz, 0))
-                sls_grid = grid[:, x_sls, z_sls]
-                intersection = ((sls_target == sls_grid) & (sls_target != 0)).sum().item()
+                intersection = get_intersection(self.target_grids[i], grid, dx, dz)
                 if intersection > max_int:
                     max_int = intersection
         return max_int
+
+
+@numba.jit(nopython=True, cache=True)
+def get_intersection(target_grid, grid, dx, dz):
+    x_sls = slice(max(dx, 0), BUILD_ZONE_SIZE_X + min(dx, 0))
+    z_sls = slice(max(dz, 0), BUILD_ZONE_SIZE_Z + min(dz, 0))
+    sls_target = target_grid[:, x_sls, z_sls]
+
+    x_sls = slice(max(-dx, 0), BUILD_ZONE_SIZE_X + min(-dx, 0))
+    z_sls = slice(max(-dz, 0), BUILD_ZONE_SIZE_Z + min(-dz, 0))
+    sls_grid = grid[:, x_sls, z_sls]
+    return ((sls_target == sls_grid) & (sls_target != 0)).sum()
+
 
 class Tasks:
     """
@@ -168,7 +163,7 @@ class Tasks:
     def to_dense(cls, blocks):
         if isinstance(blocks, (list, tuple)):
             if all(isinstance(b, (list, tuple)) for b in blocks):
-                grid = np.zeros(BUILD_ZONE_SIZE, dtype=np.int)
+                grid = np.zeros(BUILD_ZONE_SIZE, dtype=int)
                 for x, y, z, block_id in blocks:
                     grid[y + 1, x + BUILD_ZONE_SIZE_X // 2, z + BUILD_ZONE_SIZE_Z // 2] = block_id
                 blocks = grid
