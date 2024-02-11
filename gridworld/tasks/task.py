@@ -199,9 +199,18 @@ def _to_sparse(blocks):
     new_blocks = np.empty((n_blocks, 4), dtype=int)
     for i in range(n_blocks):
         # TODO: this is an exact copy of the original code, but it is not clear
-        # if the order of axes is correct (possible order in blocks: yxz)
-        x, y, z = idx[0][i], idx[1][i], idx[2][i]
-        new_blocks[i, :] = (x - zone_x, y - 1, z - zone_z, blocks[x, y, z])
+        #   if the order of axes is correct (possible order in blocks: yxz)
+        #   original: x, y, z = idx[0][i], idx[1][i], idx[2][i]
+        #   possible: x, y, z = idx[1][i], idx[0][i], idx[2][i]
+        #   the last one is exact inverse of the `to_dense` method, which looks
+        #   more correct
+
+        # yxz order in dense grid
+        y, x, z = idx[0][i], idx[1][i], idx[2][i]
+        b_type = blocks[y, x, z]
+
+        # xyz order in sparse list
+        new_blocks[i, :] = (x - zone_x, y - 1, z - zone_z, b_type)
     return new_blocks
 
 

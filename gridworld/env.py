@@ -236,7 +236,7 @@ class GridWorld(Env):
         for block in set(self.world.placed):
             self.world.remove_block(block)
         if self.starting_grid is not None:
-            for x,y,z, bid in self.starting_grid:
+            for x, y, z, bid in self.starting_grid:
                 self.world.add_block((x, y, z), bid)
         self.agent.position = self.initial_position
         self.agent.rotation = self.initial_rotation
