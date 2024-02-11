@@ -59,6 +59,9 @@ class Task:
         invariant : bool, optional
             by default True
         """
+
+        assert target_grid.dtype == int
+
         self.chat = chat
         self.starting_grid = starting_grid
         self.last_instruction = last_instruction

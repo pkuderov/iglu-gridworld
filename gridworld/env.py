@@ -147,12 +147,12 @@ class GridWorld(Env):
 
     def _add_block(self, position, kind, build_zone=True):
         if self.world.initialized and build_zone:
-            x, y, z = _to_grid_space(position)
+            x, y, z = to_grid_space(position)
             self.grid[y, x, z] = kind
 
     def _remove_block(self, position, build_zone=True):
         if self.world.initialized and build_zone:
-            x, y, z = _to_grid_space(position)
+            x, y, z = to_grid_space(position)
             if self.grid[y, x, z] == 0:
                 raise ValueError(
                     f'Removal of non-existing block. address: y={y}, x={x}, z={z}; '
@@ -319,7 +319,7 @@ class GridWorld(Env):
 
 
 @numba.jit(nopython=True, cache=True, inline='always')
-def _to_grid_space(pos_3d: int_3d) -> int_3d:
+def to_grid_space(pos_3d: int_3d) -> int_3d:
     x, y, z = pos_3d
     return x + 5, y + 1, z + 5
 
