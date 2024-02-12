@@ -8,7 +8,7 @@ from gym.spaces import Dict, Box, Discrete, Space
 
 from gridworld.core.world import Agent, World
 from gridworld.tasks.task import Task, Tasks
-from gridworld.utils import int_3d
+from gridworld.utils import int_3d, BUILD_ZONE_SIZE
 
 
 class String(Space):
@@ -33,7 +33,7 @@ class GridWorld(Env):
     ):
         self.agent = Agent(sustain=False)
         self.world = World()
-        self.grid = np.zeros((9, 11, 11), dtype=int)
+        self.grid = np.zeros(BUILD_ZONE_SIZE, dtype=int)
         self._task = None
         self._task_generator = None
         self.step_no = 0
@@ -90,10 +90,10 @@ class GridWorld(Env):
                 high=np.array([8, 12, 8, 90, 360], dtype=float),
                 shape=(5,)
             )
-            observation_space['grid'] = Box(low=-1, high=7, shape=(9, 11, 11), dtype=int)
+            observation_space['grid'] = Box(low=-1, high=7, shape=BUILD_ZONE_SIZE, dtype=int)
         if target_in_obs:
             observation_space['target_grid'] = Box(
-                low=-1, high=7, shape=(9, 11, 11), dtype=int
+                low=-1, high=7, shape=BUILD_ZONE_SIZE, dtype=int
             )
         if render:
             observation_space['pov'] = Box(
