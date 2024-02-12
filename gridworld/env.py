@@ -216,6 +216,7 @@ class GridWorld(Env):
                 self._task = self._task_generator.reset()
         elif self._task_generator is not None:
             self._task = self._task_generator.reset()
+
         self.step_no = 0
         self._task.reset()
         if self._overwrite_starting_grid is not None:
@@ -235,17 +236,19 @@ class GridWorld(Env):
 
         for block in set(self.world.placed):
             self.world.remove_block(block)
+
         if self.starting_grid is not None:
             for x, y, z, bid in self.starting_grid:
                 self.world.add_block((x, y, z), bid)
+
         self.agent.position = self.initial_position
         self.agent.rotation = self.initial_rotation
         self.max_int = self._task.maximal_intersection(self.grid)
-        self.prev_grid_size = len(self.grid.nonzero()[0])
         self.agent.inventory = [20 for _ in range(6)]
         if self.starting_grid is not None:
             for _, _, _, color in self.starting_grid:
                 self.agent.inventory[color - 1] -= 1
+
         obs = {
             'inventory': np.array(self.agent.inventory, dtype=float),
             'compass': np.array([0.], dtype=float),

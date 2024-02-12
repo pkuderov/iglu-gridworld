@@ -20,14 +20,14 @@ class Agent:
         'dy', 'time_int_steps', 'inventory', 'active_block'
     )
 
-    position: int_3d
+    position: float_3d
 
     def __init__(self, sustain=False) -> None:
         # When flying gravity has no effect and speed is increased.
         self.flying = False
         self.strafe = (0, 0)
-        self.position = (0, 0, 0)
-        self.rotation = (0, 0)
+        self.position = (0., 0., 0.)
+        self.rotation = (0., 0.)
         self.reticle = None
 
         # actions are long-lasting state switches
