@@ -196,6 +196,16 @@ class Renderer(Window):
         self.reticle.draw(GL_LINES)
 
 
+    def close(self):
+        if not self.is_headless:
+            app.platform_event_loop.stop()
+            for key in self._shown:
+                self._shown.pop(key).delete()
+
+
+        super().close()
+
+
 @numba.jit(nopython=True)
 def setup():
     """ Basic OpenGL configuration."""

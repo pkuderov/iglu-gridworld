@@ -320,6 +320,13 @@ class GridWorld(Env):
             reward = n_correct * self.right_placement_scale
         return done, reward
 
+    def close(self):
+        if self.renderer is not None:
+            self.renderer.close()
+            del self.renderer
+
+        super().close()
+
 
 @numba.jit(nopython=True, cache=True, inline='always')
 def to_grid_space(pos_3d: int_3d) -> int_3d:
