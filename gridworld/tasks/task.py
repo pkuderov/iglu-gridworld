@@ -131,24 +131,21 @@ class Task:
         self.wrong_placement = wrong_placement
         return right_placement, wrong_placement, done
 
-    def argmax_intersection(self, grid):
+    def maximal_intersection(self, grid, with_argmax=False):
         max_int, argmax = 0, (0, 0, 0)
         for i in range(len(self.admissible)):
             for dx, dz in self.admissible[i]:
-                intersection = _get_intersection(self.target_grids[i], grid, dx, dz)
+                intersection = self.get_intersection(grid, dx, dz, i)
                 if intersection > max_int:
                     max_int = intersection
                     argmax = (dx, dz, i)
-        return argmax
 
-    def maximal_intersection(self, grid):
-        max_int = 0
-        for i in range(len(self.admissible)):
-            for dx, dz in self.admissible[i]:
-                intersection = _get_intersection(self.target_grids[i], grid, dx, dz)
-                if intersection > max_int:
-                    max_int = intersection
+        if with_argmax:
+            return max_int, argmax
         return max_int
+
+    def get_intersection(self, grid, dx, dz, i):
+        return _get_intersection(self.target_grids[i], grid, dx, dz)
 
     # placeholder methods for uniformity with Tasks class
     ###
@@ -351,10 +348,12 @@ class Subtasks(Tasks):
             _, _, done = self.current.step_intersection(grid)
         return right_placement, wrong_placement, done
 
+
     def set_task(self, task_id):
         self.task_id = task_id
         self.current = self.create_task(task_id)
         return self.current
+
 
     def set_task_obj(self, task: Task):
         self.task_id = None
