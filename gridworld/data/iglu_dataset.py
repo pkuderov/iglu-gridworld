@@ -274,8 +274,9 @@ class IGLUDataset(Tasks):
                         utt_seq[-1].append(
                             f'<Architect> {self.process(row.instruction)}')
                     elif isinstance(row.Answer4ClarifyingQuestion, str):
+                        answer = self.process(row.Answer4ClarifyingQuestion)
                         utt_seq[-1].append(
-                            f'<Architect> {self.process(row.Answer4ClarifyingQuestion)}')
+                            f'<Architect> {answer}')
                 else:
                     # Builder step
                     if isinstance(row.ClarifyingQuestion, str):
@@ -431,9 +432,9 @@ class SingleTurnIGLUDataset(IGLUDataset):
         target_grid = np.array((len(target_grid), 4), dtype=int)
         task = Task(
             chat=previous_chat,
-            target_grid=Tasks.to_dense(target_grid),
-            starting_grid=Tasks.to_sparse(initial_grid),
-            full_grid=Tasks.to_dense(target_grid),
+            target_grid=Tasks.to_dense_grid(target_grid),
+            starting_grid=Tasks.to_sparse_positions(initial_grid),
+            full_grid=Tasks.to_dense_grid(target_grid),
             last_instruction=last_instruction
         )
         # To properly init max_int and prev_grid_size fields
