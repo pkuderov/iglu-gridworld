@@ -6,8 +6,8 @@ import numpy as np
 from gym import Env, Wrapper as gymWrapper
 from gym.spaces import Dict, Box, Discrete, Space
 
-from gridworld.core.world import Agent, World
-from gridworld.tasks.task import Task, Tasks
+from gridworld.world import Agent, World
+from gridworld.task import Task, Tasks
 from gridworld.utils import int_3d, BUILD_ZONE_SIZE
 
 
@@ -226,7 +226,7 @@ class GridWorld(Env):
         
         self._synthetic_init_grid = None
         if self.starting_grid is not None:
-            self._synthetic_init_grid = Tasks.to_dense(self.starting_grid)
+            self._synthetic_init_grid = Tasks.to_dense_grid(self.starting_grid)
             self._synthetic_task = Task(
                 # create a synthetic task with only diff blocks. 
                 # blocks to remove have negative ids.

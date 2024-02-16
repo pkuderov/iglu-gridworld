@@ -1,21 +1,17 @@
-from ipaddress import ip_address
-import os
-import json
-import re
-import pandas as pd
-import numpy as np
-import pickle
 import bz2
+import json
+import os
+import pickle
+import re
 from collections import defaultdict
-
-from gridworld import data
-
-from ..tasks.task import Subtasks, Task, Tasks
-from .load import download
-
 from zipfile import ZipFile
+
+import numpy as np
+import pandas as pd
 from tqdm import tqdm
 
+from gridworld.data.load import download
+from gridworld.task import Tasks, Subtasks, Task
 
 VOXELWORLD_GROUND_LEVEL = 63
 
@@ -75,7 +71,6 @@ def fix_log(log_string):
             lines.append(line)
 
     return "\n".join(lines)
-
 
 
 class IGLUDataset(Tasks):

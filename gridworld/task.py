@@ -7,8 +7,7 @@ from gridworld.utils import int_2d, BUILD_ZONE_SIZE_X, BUILD_ZONE_SIZE_Z, BUILD_
 @numba.jit(nopython=True, cache=True)
 def _fill_grid_rotations(grid: npt.NDArray[int], prev_grid: npt.NDArray[int]) -> npt.NDArray[int]:
     for x in range(BUILD_ZONE_SIZE_X):
-        for z in range(BUILD_ZONE_SIZE_Z):
-            grid[:, z, BUILD_ZONE_SIZE_X - x - 1] = prev_grid[:, x, z]
+        grid[:, :, BUILD_ZONE_SIZE_X - 1 - x] = prev_grid[:, x, :]
     return grid
 
 
@@ -104,7 +103,7 @@ class Task:
         Resets all fields at initialization of the new episode.
         """
         if self.starting_grid is not None:
-            self.max_int = self.maximal_intersection(Tasks.to_dense(self.starting_grid))
+            self.max_int = self.maximal_intersection(Tasks.to_dense_grid(self.starting_grid))
         else:
             self.max_int = 0
         self.prev_grid_size = len(self.starting_grid) if self.starting_grid is not None else 0
@@ -176,19 +175,14 @@ def _get_intersection(target_grid, grid, dx, dz):
 
 
 @numba.jit(nopython=True, cache=True)
-def _to_dense(grid, blocks):
-    zone_x = BUILD_ZONE_SIZE_X // 2
-    zone_z = BUILD_ZONE_SIZE_Z // 2
+def _to_dense_grid(grid, blocks):
     for block in blocks:
         x, y, z, block_id = block
-        grid[y + 1, x + zone_x, z + zone_z] = block_id
+        grid[y + 1, x + 5, z + 5] = block_id
     return grid
 
 
-def _to_sparse(blocks):
-    zone_x = BUILD_ZONE_SIZE_X // 2
-    zone_z = BUILD_ZONE_SIZE_Z // 2
-
+def _to_sparse_positions(blocks):
     # TODO: it is not clear if the order of axes is correctly assumed for dense grid
     #   original: x, y, z = idx[0][i], idx[1][i], idx[2][i]
     #   possible: y, x, z = idx[0][i], idx[1][i], idx[2][i]
@@ -198,18 +192,18 @@ def _to_sparse(blocks):
     y, x, z = blocks.nonzero()
     colors = blocks[y, x, z]
 
-    x -= zone_x
     y -= 1
-    z -= zone_z
+    x -= 5
+    z -= 5
 
     n_blocks = len(x)
-    new_blocks = np.empty((n_blocks, 4), dtype=int)
-    new_blocks[:, 0] = x
-    new_blocks[:, 1] = y
-    new_blocks[:, 2] = z
-    new_blocks[:, 3] = colors
+    positions = np.empty((n_blocks, 4), dtype=int)
+    positions[:, 0] = x
+    positions[:, 1] = y
+    positions[:, 2] = z
+    positions[:, 3] = colors
 
-    return new_blocks
+    return positions
 
 
 class Tasks:
@@ -217,7 +211,7 @@ class Tasks:
     Represents many tasks where one can be active
     """
     @classmethod
-    def to_dense(cls, blocks):
+    def to_dense_grid(cls, blocks):
         is_list = isinstance(blocks, (list, tuple))
         is_arr = isinstance(blocks, np.ndarray) and blocks.shape[1] == 4
 
@@ -226,14 +220,16 @@ class Tasks:
             if len(blocks) > 0:
                 if is_list:
                     blocks = np.array(blocks, dtype=int)
-                grid = _to_dense(grid, blocks)
+                grid = _to_dense_grid(grid, blocks)
             blocks = grid
         return blocks
 
     @classmethod
-    def to_sparse(cls, blocks):
+    def to_sparse_positions(cls, blocks):
         if isinstance(blocks, np.ndarray) and blocks.shape[1] != 4:
-            blocks = _to_sparse(blocks)
+            blocks = _to_sparse_positions(blocks)
+        else:
+            raise ValueError(f'Invalid blocks type: {type(blocks)} {blocks}')
         return blocks
 
     def reset(self) -> Task:
@@ -267,7 +263,7 @@ class Subtasks(Tasks):
         self.full = False
         self.task_start = 0
         self.task_goal = 0
-        self.full_structure = self.to_dense(self.structure_seq[-1])
+        self.full_structure = self.to_dense_grid(self.structure_seq[-1])
         self.current = self.reset()
 
     def __getattr__(self, name):
@@ -326,8 +322,8 @@ class Subtasks(Tasks):
         tid = min(turn_goal, len(self.structure_seq) - 1) if not self.full else -1
         target_grid = self.structure_seq[tid]
         task = Task(
-            dialog, target_grid=self.to_dense(target_grid),
-            starting_grid=self.to_sparse(initial_blocks),
+            dialog, target_grid=self.to_dense_grid(target_grid),
+            starting_grid=self.to_sparse_positions(initial_blocks),
             full_grid=self.full_structure,
             last_instruction='\n'.join(self.dialog[tid])
         )
