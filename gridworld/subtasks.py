@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import numpy as np
-from gridworld.task import Tasks, Task
+from gridworld.task import Tasks, Task, to_dense_grid, to_sparse_positions
 
 
 class Subtasks(Tasks):
     """ Subtasks object represents a staged task where subtasks represent separate segments
     """
-    def __init__(self, dialog, structure_seq, invariant=False, progressive=True) -> None:
+    def __init__(
+            self, dialog, structure_seq, invariant=False, progressive=True
+    ):
         self.dialog = dialog
         self.invariant = invariant
         self.progressive = progressive
@@ -16,7 +18,7 @@ class Subtasks(Tasks):
         self.full = False
         self.task_start = 0
         self.task_goal = 0
-        self.full_structure = self.to_dense_grid(self.structure_seq[-1])
+        self.full_structure = to_dense_grid(self.structure_seq[-1])
         self.current = self.reset()
 
     def __getattr__(self, name):
@@ -75,8 +77,8 @@ class Subtasks(Tasks):
         tid = min(turn_goal, len(self.structure_seq) - 1) if not self.full else -1
         target_grid = self.structure_seq[tid]
         task = Task(
-            target_grid=self.to_dense_grid(target_grid),
-            initial_blocks=self.to_sparse_positions(initial_blocks),
+            target_grid=to_dense_grid(target_grid),
+            initial_blocks=to_sparse_positions(initial_blocks),
             full_grid=self.full_structure,
             chat=dialog, last_instruction='\n'.join(self.dialog[tid])
         )
@@ -97,12 +99,10 @@ class Subtasks(Tasks):
             _, _, done = self.current.step_intersection(grid)
         return right_placement, wrong_placement, done
 
-
     def set_task(self, task_id):
         self.task_id = task_id
         self.current = self.create_task(task_id)
         return self.current
-
 
     def set_task_obj(self, task: Task):
         self.task_id = None

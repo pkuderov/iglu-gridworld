@@ -30,12 +30,12 @@ class Task:
 
         assert target_grid.dtype == int
 
-        self.target_grid = Tasks.to_dense_grid(target_grid)
+        self.target_grid = to_dense_grid(target_grid)
         self.target_size = np.count_nonzero(target_grid)
 
         if initial_blocks is None:
             initial_blocks = []
-        self.initial_blocks = Tasks.to_sparse_positions(initial_blocks)
+        self.initial_blocks = to_sparse_positions(initial_blocks)
 
         self.chat = chat
         self.last_instruction = last_instruction
@@ -80,7 +80,9 @@ class Task:
         Resets all fields at initialization of the new episode.
         """
         if self.initial_blocks is not None:
-            self.max_int = self.maximal_intersection(Tasks.to_dense_grid(self.initial_blocks))
+            self.max_int = self.maximal_intersection(
+                to_dense_grid(self.initial_blocks)
+            )
         else:
             self.max_int = 0
         self.prev_grid_size = len(self.initial_blocks) if self.initial_blocks is not None else 0
@@ -208,55 +210,51 @@ def _to_sparse_positions(blocks):
     return positions
 
 
+def to_dense_grid(blocks):
+    is_sparse_list = isinstance(blocks, (list, tuple))
+    is_sparse_np = isinstance(blocks, np.ndarray) and blocks.shape[1] == 4
+
+    if is_sparse_np or is_sparse_list:
+        blocks = to_sparse_positions(blocks)
+        grid = np.zeros(BUILD_ZONE_SIZE, dtype=int)
+        return _to_dense_grid(grid, blocks)
+
+    return blocks
+
+
+def to_sparse_positions(blocks):
+    if isinstance(blocks, np.ndarray):
+        if blocks.shape[1] == 4:
+            # already in correct sparse format
+            return blocks
+        return _to_sparse_positions(blocks)
+
+    if isinstance(blocks, (list, tuple)):
+        # already in sparse format, but not as numpy array
+        if len(blocks) > 0:
+            return np.array(blocks, dtype=int)
+        else:
+            return np.empty((0, 4), dtype=int)
+
+    raise ValueError(f'Invalid blocks type: {type(blocks)} {blocks}')
+
+
 class Tasks:
-    """
-    Represents many tasks where one can be active
-    """
-    @classmethod
-    def to_dense_grid(cls, blocks):
-        is_sparse_list = isinstance(blocks, (list, tuple))
-        is_sparse_np = isinstance(blocks, np.ndarray) and blocks.shape[1] == 4
-
-        if is_sparse_np or is_sparse_list:
-            blocks = cls.to_sparse_positions(blocks)
-            grid = np.zeros(BUILD_ZONE_SIZE, dtype=int)
-            return _to_dense_grid(grid, blocks)
-
-        return blocks
-
-    @classmethod
-    def to_sparse_positions(cls, blocks):
-        if isinstance(blocks, np.ndarray):
-            if blocks.shape[1] == 4:
-                # already in correct sparse format
-                return blocks
-            return _to_sparse_positions(blocks)
-
-        if isinstance(blocks, (list, tuple)):
-            # already in sparse format, but not as numpy array
-            if len(blocks) > 0:
-                return np.array(blocks, dtype=int)
-            else:
-                return np.empty((0, 4), dtype=int)
-
-        raise ValueError(f'Invalid blocks type: {type(blocks)} {blocks}')
-
+    """Represents many tasks where one can be active"""
     def reset(self) -> Task:
-        return NotImplemented
+        raise NotImplementedError()
 
     def __len__(self) -> int:
-        return NotImplemented
+        raise NotImplementedError()
 
     def __iter__(self):
-        return NotImplemented
+        raise NotImplementedError()
 
     def set_task(self, task_id):
-        return NotImplemented
+        raise NotImplementedError()
 
     def get_target(self):
-        return NotImplemented
+        raise NotImplementedError()
 
     def set_task_obj(self, task: Task):
-        return NotImplemented
-
-
+        raise NotImplementedError()

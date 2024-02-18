@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from gridworld.data.iglu_dataset import IGLUDataset
 from gridworld.data.load import download
-from gridworld.task import Task, Tasks
+from gridworld.task import Task, to_dense_grid, to_sparse_positions
 from tqdm import tqdm
 
 
@@ -108,9 +108,9 @@ class SingleTurnIGLUDataset(IGLUDataset):
     ):
         target_grid = np.array((len(target_grid), 4), dtype=int)
         task = Task(
-            target_grid=Tasks.to_dense_grid(target_grid),
-            initial_blocks=Tasks.to_sparse_positions(initial_grid),
-            full_grid=Tasks.to_dense_grid(target_grid),
+            target_grid=to_dense_grid(target_grid),
+            initial_blocks=to_sparse_positions(initial_grid),
+            full_grid=to_dense_grid(target_grid),
             chat=previous_chat,
             last_instruction=last_instruction
         )
