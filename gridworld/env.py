@@ -1,5 +1,3 @@
-import warnings
-
 import gym
 import numba
 import numpy as np
@@ -52,7 +50,6 @@ class GridWorld(Env):
         self.max_steps = max_steps
 
         self._task = None
-        self._task_generator = None
 
         self.right_placement_scale = right_placement_scale
         self.wrong_placement_scale = wrong_placement_scale
@@ -104,54 +101,20 @@ class GridWorld(Env):
         the task state to the initial one.
         Note that the env can only work with non-None task or task generator.
         """
-        if self._task_generator is not None:
-            warnings.warn("The .set_task method has no effect with an initialized tasks generator. "
-                          "Drop it using .set_tasks_generator(None) after calling .set_task")
         self._task = task
-        self.reset()
-
-    def set_task_generator(self, task_generator: Tasks):
-        """
-        Sets task generator for the current environment. On each .reset, the environment
-        queries the .reset method of generator which returns the next task according to the generator.
-        Note that the env can only work with non-None task or task generator.
-        """
-        self._task_generator = task_generator
         self.reset()
 
     def initialize_world(self, starting_grid, initial_poisition):
         self._overwrite_starting_grid = starting_grid
-        warnings.warn(
-            'Default task starting grid is overwritten using .initialize_world method. '
-            'Use .deinitialize_world to restore the original state.'
-        )
         self.initial_position = tuple(initial_poisition[:3])
         self.initial_rotation = tuple(initial_poisition[3:])
         self.reset()
 
     @property
     def task(self):
-        if self._task is None:
-            if self._task_generator is None:
-                raise ValueError('Task is not initialized! Initialize task before working with'
-                                ' the environment using .set_task method OR set tasks distribution using '
-                                '.set_task_generator method')
-            self._task = self._task_generator.reset()
-            self.starting_grid = self._task.starting_grid
         return self._task
 
     def reset(self, **_):
-        if self._task is None:
-            if self._task_generator is None:
-                raise ValueError('Task is not initialized! Initialize task before working with'
-                                ' the environment using .set_task method OR set tasks distribution using '
-                                '.set_task_generator method')
-            else:
-                # yield new task
-                self._task = self._task_generator.reset()
-        elif self._task_generator is not None:
-            self._task = self._task_generator.reset()
-
         self.i_step = 0
         self._task.reset()
         if self._overwrite_starting_grid is not None:
@@ -213,13 +176,6 @@ class GridWorld(Env):
         )
 
     def step(self, action):
-        if self._task is None:
-            if self._task_generator is None:
-                raise ValueError('Task is not initialized! Initialize task before working with'
-                                ' the environment using .set_task method OR set tasks distribution using '
-                                '.set_task_generator method')
-            else:
-                raise ValueError('Task is not initialized! Run .reset() first.')
         self.i_step += 1
 
         self.world.step(
