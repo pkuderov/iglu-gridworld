@@ -36,9 +36,7 @@ float_3d = tuple[float, float, float]
 
 @numba.jit(nopython=True, cache=True, inline='always')
 def cube_vertices(x, y, z, n, top_only=False):
-    """ Return the vertices of the cube at position x, y, z with size 2*n.
-
-    """
+    """ Return the vertices of the cube at position x, y, z with size 2*n."""
     if top_only:
         return [
             # top
@@ -84,17 +82,7 @@ def cube_vertices(x, y, z, n, top_only=False):
 @numba.jit(nopython=True, cache=True, inline='always')
 def discretize_3d(position: float_3d) -> int_3d:
     """ Accepts `position` of arbitrary precision and returns the block
-    containing that position.
-
-    Parameters
-    ----------
-    position : tuple of len 3
-
-    Returns
-    -------
-    block_position : tuple of ints of len 3
-
-    """
+    containing that position."""
     x, y, z = position
     x, y, z = round(x), round(y), round(z)
     return x, y, z
@@ -114,15 +102,12 @@ def to_float_3d(position: tuple | list) -> float_3d:
 
 @numba.jit(nopython=True, cache=True)
 def tex_coord(x, y, split=False, side_n=0) -> list[float]:
-    """ Return the bounding vertices of the texture square.
-
-    """
+    """ Return the bounding vertices of the texture square."""
     n = 4
     m = 1.0 / n
-    m1 = 1.0 / n / (2 if split else 1)
+    m1 = m / (2 if split else 1)
 
-    cx = 0.
-    cy = 0.
+    cx, cy = 0., 0.
 
     if split:
         if side_n == 0:
@@ -133,8 +118,7 @@ def tex_coord(x, y, split=False, side_n=0) -> list[float]:
             cx, cy = 0.125, 0
         elif side_n == 3:
             cx, cy = 0.125, 0.125
-    else:
-        cx, cy = 0, 0
+
     dx = x * m
     dy = y * m
     return [
@@ -147,9 +131,7 @@ def tex_coord(x, y, split=False, side_n=0) -> list[float]:
 
 @numba.jit(nopython=True)
 def texture_coordinates(x: int, y: int, top_only: bool, split: bool) -> list[float]:
-    """ Return a list of the texture squares for the top, bottom and side.
-
-    """
+    """ Return a list of the texture squares for the top, bottom and side."""
     result: list[float] = []
     if split:
         if top_only:
