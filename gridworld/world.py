@@ -1,15 +1,12 @@
 import math
-from typing import Optional
 
 import numba
-from numba.typed.typeddict import Dict
-
 from gridworld.utils import (
     WHITE, GREY, BLUE, FACES, int_3d, FLYING_SPEED, WALKING_SPEED, GRAVITY,
     TERMINAL_VELOCITY, PLAYER_HEIGHT, JUMP_SPEED, discretize_3d, float_3d, float_2d, int_2d,
     to_float_3d, to_int_3d
 )
-
+from numba.typed.typeddict import Dict
 
 PLAYER_PAD = 0.25
 
@@ -21,13 +18,15 @@ class Agent:
     )
 
     position: float_3d
+    rotation: float_2d
+    strafe: int_2d
 
-    def __init__(self, sustain=False) -> None:
+    def __init__(self, is_flying: bool, sustain=False) -> None:
         # When flying gravity has no effect and speed is increased.
-        self.flying = False
-        self.strafe = (0, 0)
+        self.flying = is_flying
         self.position = (0., 0., 0.)
         self.rotation = (0., 0.)
+        self.strafe = (0, 0)
         self.reticle = None
 
         # actions are long-lasting state switches
@@ -52,7 +51,6 @@ class World:
     init_blocks: dict[int_3d, int]
 
     def __init__(self):
-        # make it
         self.world = Dict.empty(
             key_type=numba.typeof((0, 0, 0)),
             value_type=numba.typeof(0)
@@ -65,6 +63,7 @@ class World:
 
         self.shown = {}
         self.placed = set()
+
         self.callbacks = {
             'on_add': [],
             'on_remove': []
@@ -92,7 +91,7 @@ class World:
             self.add_block(position, texture)
         self.initialized = True
 
-    def hit_test(self, position, vector, max_distance=8):
+    def hit_test(self, position, direction, max_distance=8):
         """
         Line of sight search from current position. If a block is
         intersected it is returned, along with the block previously in the line
@@ -102,14 +101,13 @@ class World:
         ----------
         position : tuple of len 3
             The (x, y, z) position to check visibility from.
-        vector : tuple of len 3
+        direction : tuple of len 3
             The line of sight vector.
         max_distance : int
             How many blocks away to search for a hit.
-
         """
         position = to_float_3d(position)
-        return _hit_test(self.world, position, vector, max_distance)
+        return _hit_test(self.world, position, direction, max_distance)
 
     def add_block(self, block_position: int_3d, texture: int):
         """ Add a block with the given `texture` and `position` to the world.
@@ -178,6 +176,7 @@ class World:
 
     def place_or_remove_block(self, agent, remove: bool, place: bool):
         if place == remove:
+            # both false -> do nothing, or true -> incorrect
             return
 
         block, previous_block = self.hit_test(
@@ -198,7 +197,7 @@ class World:
         if not _is_build_zone(bx, by, bz):
             return
         agent_position = to_float_3d(agent.position)
-        if _is_agent_near(agent_position, bx, by, bz):
+        if _is_agent_near_block(agent_position, bx, by, bz):
             return
 
         self.add_block(block_position, texture)
@@ -212,15 +211,19 @@ class World:
         agent.inventory[texture - 1] += 1
 
     def get_focused_block(self, agent):
-        vector = get_sight_vector(agent.rotation)
-        return self.hit_test(agent.position, vector)[0]
+        block, _ = self.hit_test(
+            agent.position, get_sight_vector(agent.rotation)
+        )
+        return block
 
     @staticmethod
     def move_camera(agent, dx: float, dy: float):
         agent.rotation = _move_camera(agent.rotation, dx, dy)
 
     @staticmethod
-    def movement(agent, strafe: tuple[int, int], dy: float, inventory: Optional[int] = None):
+    def movement(
+            agent, strafe: tuple[int, int], dy: float, inventory: int = None
+    ):
         agent.strafe = _add_strafe(agent.strafe, strafe)
         agent.dy = _compute_dy(agent.dy, dy, agent.flying)
 
@@ -494,7 +497,7 @@ def _hit_test(
 
 
 @numba.jit(nopython=True, cache=True)
-def _is_agent_near(agent_position: float_3d, bx: int, by: int, bz: int) -> bool:
+def _is_agent_near_block(agent_position: float_3d, bx: int, by: int, bz: int) -> bool:
     x, y, z = agent_position
     y = y - (PLAYER_HEIGHT - 1.) + PLAYER_PAD
     bx -= 0.5

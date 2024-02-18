@@ -3,12 +3,11 @@ import warnings
 import gym
 import numba
 import numpy as np
-from gym import Env, Wrapper as gymWrapper
-from gym.spaces import Dict, Box, Discrete, Space
-
-from gridworld.world import Agent, World
 from gridworld.task import Task, Tasks
 from gridworld.utils import int_3d, BUILD_ZONE_SIZE
+from gridworld.world import Agent, World
+from gym import Env
+from gym.spaces import Dict, Box, Discrete, Space
 
 
 class String(Space):
@@ -27,11 +26,16 @@ class GridWorld(Env):
 
     def __init__(
             self, render=True, max_steps=250, select_and_place=False,
-            discretize=False, right_placement_scale=1., wrong_placement_scale=0.1,
+            discretize=False,
+            right_placement_scale=1., wrong_placement_scale=0.1,
             render_size=(64, 64), target_in_obs=False, action_space='walking', 
             vector_state=True, fake=False, name=''
     ):
-        self.agent = Agent(sustain=False)
+        is_flying = action_space == 'flying'
+        self.agent = Agent(
+            is_flying=is_flying,
+            sustain=False
+        )
         self.world = World()
         self.grid = np.zeros(BUILD_ZONE_SIZE, dtype=int)
         self._task = None
@@ -77,7 +81,6 @@ class GridWorld(Env):
                 'inventory': Discrete(7),
                 'placement': Discrete(3),
             })
-            self.agent.flying = True
 
         observation_space = {
             'inventory': Box(low=0, high=20, shape=(6,), dtype=float),
@@ -103,47 +106,11 @@ class GridWorld(Env):
         self.observation_space = Dict(observation_space)
         self.max_int = 0
         self.name = name
-        self.do_render = render
-        if render and not fake:
-            from gridworld.render import Renderer, setup, PLATFORM
-            import pyglet
-            if PLATFORM == 'Darwin' and not pyglet.options["headless"]:
-                # for some reason COCOA renderer sets the viewport size 
-                # to be twice as the requested size. This is a temporary 
-                # workaround
-                div = 2
-            else:
-                div = 1
-            self.renderer = Renderer(
-                self.world, self.agent,
-                width=self.render_size[0] // div, height=self.render_size[1] // div,
-                caption='Pyglet', resizable=False
-            )
-            setup()
-        else:
-            self.renderer = None
-            self.world.initialize()
 
-    def enable_renderer(self):
-        if self.renderer is None and not self.fake:
-            from gridworld.render import Renderer, setup, PLATFORM
-            import pyglet
-            if PLATFORM == 'Darwin' and not pyglet.options["headless"]:
-                # for some reason COCOA renderer sets the viewport size 
-                # to be twice as the requested size. This is a temporary 
-                # workaround
-                div = 2
-            else:
-                div = 1
-            self.reset()
-            self.world.reset()
-            self.renderer = Renderer(
-                self.world, self.agent,
-                width=self.render_size[0] // div, height=self.render_size[1] // div,
-                caption='Pyglet', resizable=False
-            )
-            setup()
-            self.do_render = True
+        self.do_render = render
+        self.renderer = self._setup_pyglet_renderer() if render and not fake else None
+
+        self.world.initialize()
 
     def _add_block(self, position, kind, build_zone=True):
         if self.world.initialized and build_zone:
@@ -260,16 +227,19 @@ class GridWorld(Env):
         if self.target_in_obs:
             obs['target_grid'] = self._task.target_grid.copy()
         if self.do_render and not self.fake:
-            obs['pov'] = self.render()[..., :-1]
+            obs['pov'] = self.render()
         elif self.do_render:
-            obs['pov'] = self.observation_space['pov'].sample()
+            pov = self.observation_space['pov'].sample()
+            obs['pov'] = pov
         return obs
 
     def render(self, *_, **__):
         if not self.do_render:
             raise ValueError('create env with render=True')
 
-        return self.renderer.render()
+        return self.renderer.render(
+            self.agent.position, self.agent.rotation
+        )
 
     def step(self, action):
         if self._task is None:
@@ -306,7 +276,7 @@ class GridWorld(Env):
         if self.target_in_obs:
             obs['target_grid'] = self._task.target_grid.copy()
         if self.do_render and not self.fake:
-            obs['pov'] = self.render()[..., :-1]
+            obs['pov'] = self.render()
         elif self.do_render:
             obs['pov'] = self.observation_space['pov'].sample()
         return obs, reward, done, {}
@@ -327,60 +297,29 @@ class GridWorld(Env):
 
         super().close()
 
+    def _setup_pyglet_renderer(self):
+        import os
+        import gridworld
+        from gridworld.render import Renderer
+
+        dir_path = os.path.dirname(gridworld.__file__)
+        renderer = Renderer(
+            width=self.render_size[0],
+            height=self.render_size[1],
+            dir_path=dir_path,
+            caption='Pyglet', resizable=False,
+        )
+        # setup callbacks
+        self.world.add_callback('on_add', renderer.add_block)
+        self.world.add_callback('on_remove', renderer.remove_block)
+
+        return renderer
+
 
 @numba.jit(nopython=True, cache=True, inline='always')
 def to_grid_space(pos_3d: int_3d) -> int_3d:
     x, y, z = pos_3d
     return x + 5, y + 1, z + 5
-
-
-class Wrapper(gymWrapper):
-    def __getattr__(self, name):
-        return getattr(self.env, name)
-    
-    def render(self, mode="human", **kwargs):
-        if isinstance(self.env, GridWorld):
-            return self.env.render()
-        else:
-            return self.env.render(mode, **kwargs)
-
-
-class SizeReward(Wrapper):
-    def __init__(self, env):
-        super().__init__(env)
-        self.size = 0
-
-    def reset(self):
-        self.size = 0
-        return super().reset()
-
-    def step(self, action):
-        obs, reward, done, info = super().step(action)
-        intersection = self.unwrapped.max_int
-        reward = max(intersection, self.size) - self.size
-        self.size = max(intersection, self.size)
-        reward += min(self.unwrapped.wrong_placement * 0.02, 0)
-        return obs, reward, done, info
-
-
-def create_env(
-        render=True, discretize=True, size_reward=True, select_and_place=True,
-        right_placement_scale=1, render_size=(64, 64), target_in_obs=False,
-        vector_state=False, max_steps=250, action_space='walking',
-        wrong_placement_scale=0.1, name='', fake=False
-):
-    env = GridWorld(
-        render=render, select_and_place=select_and_place,
-        discretize=discretize, right_placement_scale=right_placement_scale,
-        wrong_placement_scale=wrong_placement_scale, name=name,
-        render_size=render_size, target_in_obs=target_in_obs,
-        vector_state=vector_state, max_steps=max_steps,
-        action_space=action_space, fake=fake
-    )
-    if size_reward:
-        env = SizeReward(env)
-    # env = Actions(env)
-    return env
 
 
 gym.envs.register(
