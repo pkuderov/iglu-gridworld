@@ -61,6 +61,7 @@ class World:
         )
         _add_initial_blocks(self.init_blocks)
 
+        # TODO: WTF with these two, also do not include initial blocks to world?
         self.shown = {}
         self.placed = set()
 
@@ -234,24 +235,6 @@ class World:
     # ========= END AGENT CONTROL =========
 
     # ========= UNIFIED AGENT CONTROL =========
-    @staticmethod
-    def parse_flying_action(action):
-        """
-        Args:
-            action: dictionary with keys:
-              * 'movement':  Box(low=-1, high=1, shape=(3,)) - forward/backward, left/right,
-                  up/down movement
-              * 'camera': Box(low=[-180, -90], high=[180, 90], shape=(2,)) - camera movement (yaw, pitch)
-              * 'inventory': Discrete(7) - 0 for no-op, 1-6 for selecting block color
-              * 'placement': Discrete(3) - 0 for no-op, 1 for placement, 2 for breaking
-        """
-        strafe = tuple(action['movement'][:2])
-        dy = action['movement'][2]
-        camera = list(action['camera'])
-        inventory = action['inventory'] if action['inventory'] != 0 else None
-        add = action['placement'] == 1
-        remove = action['placement'] == 2
-        return strafe, dy, inventory, camera, remove, add
 
     def step(
             self, agent, action, select_and_place=False,
@@ -259,11 +242,11 @@ class World:
     ):
         if action_space == 'walking':
             if discretize:
-                tup = parse_walking_discrete_action(action)
+                tup = _parse_walking_discrete_action(action)
             else:
-                tup = parse_walking_action(action)
+                tup = _parse_walking_action(action)
         elif action_space == 'flying':
-            tup = self.parse_flying_action(action)
+            tup = _parse_flying_action(action)
         else:
             raise ValueError(f'Unknown action space: {action_space}')
 
@@ -277,64 +260,6 @@ class World:
         self.update(agent, dt=1/20.)
 
     # ========= END UNIFIED AGENT CONTROL =========
-
-
-def parse_walking_action(action):
-    strafe = [0,0]
-    if action['forward']:
-        strafe[0] += -1
-    if action['back']:
-        strafe[0] += 1
-    if action['left']:
-        strafe[1] += -1
-    if action['right']:
-        strafe[1] += 1
-    jump = int(action['jump'])
-    if action['hotbar'] == 0:
-        inventory = None
-    else:
-        inventory = action['hotbar']
-    camera = action['camera']
-    remove = bool(action['attack'])
-    add = bool(action['use'])
-    return strafe, jump, inventory, camera, remove, add
-
-
-def parse_walking_discrete_action(action):
-    # 0 noop; 1 forward; 2 back; 3 left; 4 right; 5 jump; 6-11 hotbar; 12 camera left;
-    # 13 camera right; 14 camera up; 15 camera down; 16 attack; 17 use;
-    # action = list(action).index(1)
-    strafe = [0, 0]
-    camera = [0, 0]
-    dy = 0
-    inventory = None
-    remove = False
-    add = False
-    if action == 1:
-        strafe[0] += -1
-    elif action == 2:
-        strafe[0] += 1
-    elif action == 3:
-        strafe[1] += -1
-    elif action == 4:
-        strafe[1] += 1
-    elif action == 5:
-        dy = 1
-    elif 6 <= action <= 11:
-        inventory = action - 5
-    elif action == 12:
-        camera[0] = -5
-    elif action == 13:
-        camera[0] = 5
-    elif action == 14:
-        camera[1] = -5
-    elif action == 15:
-        camera[1] = 5
-    elif action == 16:
-        remove = True
-    elif action == 17:
-        add = True
-    return strafe, dy, inventory, camera, remove, add
 
 
 # ========= NUMBA-OPTIMIZED IMPLEMENTATIONS =========
@@ -601,3 +526,83 @@ def _update(
             agent_dy = 0
 
     return agent_position, agent_dy, agent_time_int_steps
+
+# ========= END NUMBA-OPTIMIZED IMPLEMENTATIONS =========
+
+
+# ========= ACTION PARSING =========
+def _parse_flying_action(action):
+    """
+    Args:
+        action: dictionary with keys:
+          * 'movement':  Box(low=-1, high=1, shape=(3,)) - forward/backward, left/right,
+              up/down movement
+          * 'camera': Box(low=[-180, -90], high=[180, 90], shape=(2,)) - camera movement (yaw, pitch)
+          * 'inventory': Discrete(7) - 0 for no-op, 1-6 for selecting block color
+          * 'placement': Discrete(3) - 0 for no-op, 1 for placement, 2 for breaking
+    """
+    strafe = tuple(action['movement'][:2])
+    dy = action['movement'][2]
+    camera = list(action['camera'])
+    inventory = action['inventory'] if action['inventory'] != 0 else None
+    add = action['placement'] == 1
+    remove = action['placement'] == 2
+    return strafe, dy, inventory, camera, remove, add
+
+
+def _parse_walking_action(action):
+    strafe = [0,0]
+    if action['forward']:
+        strafe[0] += -1
+    if action['back']:
+        strafe[0] += 1
+    if action['left']:
+        strafe[1] += -1
+    if action['right']:
+        strafe[1] += 1
+    jump = int(action['jump'])
+    if action['hotbar'] == 0:
+        inventory = None
+    else:
+        inventory = action['hotbar']
+    camera = action['camera']
+    remove = bool(action['attack'])
+    add = bool(action['use'])
+    return strafe, jump, inventory, camera, remove, add
+
+
+def _parse_walking_discrete_action(action):
+    # 0 noop; 1 forward; 2 back; 3 left; 4 right; 5 jump; 6-11 hotbar; 12 camera left;
+    # 13 camera right; 14 camera up; 15 camera down; 16 attack; 17 use;
+    # action = list(action).index(1)
+    strafe = [0, 0]
+    camera = [0, 0]
+    dy = 0
+    inventory = None
+    remove = False
+    add = False
+    if action == 1:
+        strafe[0] += -1
+    elif action == 2:
+        strafe[0] += 1
+    elif action == 3:
+        strafe[1] += -1
+    elif action == 4:
+        strafe[1] += 1
+    elif action == 5:
+        dy = 1
+    elif 6 <= action <= 11:
+        inventory = action - 5
+    elif action == 12:
+        camera[0] = -5
+    elif action == 13:
+        camera[0] = 5
+    elif action == 14:
+        camera[1] = -5
+    elif action == 15:
+        camera[1] = 5
+    elif action == 16:
+        remove = True
+    elif action == 17:
+        add = True
+    return strafe, dy, inventory, camera, remove, add

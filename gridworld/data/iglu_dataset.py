@@ -11,7 +11,8 @@ import pandas as pd
 from tqdm import tqdm
 
 from gridworld.data.load import download
-from gridworld.task import Tasks, Subtasks, Task
+from gridworld.task import Tasks, Task
+from gridworld.subtasks import Subtasks
 
 VOXELWORLD_GROUND_LEVEL = 63
 
@@ -426,10 +427,10 @@ class SingleTurnIGLUDataset(IGLUDataset):
     ):
         target_grid = np.array((len(target_grid), 4), dtype=int)
         task = Task(
-            chat=previous_chat,
             target_grid=Tasks.to_dense_grid(target_grid),
-            starting_grid=Tasks.to_sparse_positions(initial_grid),
+            initial_blocks=Tasks.to_sparse_positions(initial_grid),
             full_grid=Tasks.to_dense_grid(target_grid),
+            chat=previous_chat,
             last_instruction=last_instruction
         )
         # To properly init max_int and prev_grid_size fields

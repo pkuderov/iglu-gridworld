@@ -76,7 +76,6 @@ class GridWorld(Env):
 
         self.do_render = render
         self.renderer = self._setup_pyglet_renderer() if render and not fake else None
-
         self.world.initialize()
 
     def _add_block(self, position, kind, build_zone=True):
@@ -116,19 +115,19 @@ class GridWorld(Env):
 
     def reset(self, **_):
         self.i_step = 0
-        self._task.reset()
+
+        self.starting_grid = self._task.initial_blocks
         if self._overwrite_starting_grid is not None:
             self.starting_grid = self._overwrite_starting_grid
-        else:
-            self.starting_grid = self._task.starting_grid
-        
+
+        self._task.reset()
         self._synthetic_init_grid = None
         if self.starting_grid is not None:
             self._synthetic_init_grid = Tasks.to_dense_grid(self.starting_grid)
             self._synthetic_task = Task(
-                # create a synthetic task with only diff blocks. 
+                # create a synthetic task with only diff blocks.
                 # blocks to remove have negative ids.
-                '', target_grid=self._task.target_grid - self._synthetic_init_grid
+                target_grid=self._task.target_grid - self._synthetic_init_grid
             )
             self._synthetic_task.reset()
 
