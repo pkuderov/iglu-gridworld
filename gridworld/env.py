@@ -21,91 +21,61 @@ class String(Space):
         return isinstance(obj, str)
 
 
+# TODO:
+#  - switch to gymnasium.Env API
+
+
 class GridWorld(Env):
     observation_space: Dict
+
+    i_step: int
+    max_steps: int
 
     def __init__(
             self, render=True, max_steps=250, select_and_place=False,
             discretize=False,
             right_placement_scale=1., wrong_placement_scale=0.1,
             render_size=(64, 64), target_in_obs=False, action_space='walking', 
-            vector_state=True, fake=False, name=''
+            vector_state=True, fake=False
     ):
         is_flying = action_space == 'flying'
-        self.agent = Agent(
-            is_flying=is_flying,
-            sustain=False
-        )
+        self.agent = Agent(is_flying=is_flying)
         self.world = World()
-        self.grid = np.zeros(BUILD_ZONE_SIZE, dtype=int)
-        self._task = None
-        self._task_generator = None
-        self.step_no = 0
-        self.right_placement_scale = right_placement_scale
-        self.wrong_placement_scale = wrong_placement_scale
-        self.max_steps = max_steps
         self.world.add_callback('on_add', self._add_block)
         self.world.add_callback('on_remove', self._remove_block)
+
+        # TODO: move to world
+        self.grid = np.zeros(BUILD_ZONE_SIZE, dtype=int)
+        self.starting_grid = None
+
+        self.i_step = 0
+        self.max_steps = max_steps
+
+        self._task = None
+        self._task_generator = None
+
+        self.right_placement_scale = right_placement_scale
+        self.wrong_placement_scale = wrong_placement_scale
         self.right_placement = 0
         self.wrong_placement = 0
+        self.max_int = 0
+
         self.render_size = render_size
         self.select_and_place = select_and_place
         self.target_in_obs = target_in_obs
         self.vector_state = vector_state
         self.discretize = discretize
         self.action_space_type = action_space
-        self.starting_grid = None
         self.fake = fake
+
         self._overwrite_starting_grid = None
         self.initial_position = (0, 0, 0)
         self.initial_rotation = (0, 0)
-        if action_space == 'walking':
-            if discretize:
-                self.action_space = Discrete(18)
-            else:        
-                self.action_space = Dict({
-                    'forward': Discrete(2),
-                    'back': Discrete(2),
-                    'left': Discrete(2),
-                    'right': Discrete(2),
-                    'jump': Discrete(2),
-                    'attack': Discrete(2),
-                    'use': Discrete(2),
-                    'camera': Box(low=-5, high=5, shape=(2,)),
-                    'hotbar': Discrete(7)
-                })
-        elif action_space == 'flying':
-            self.action_space = Dict({
-                'movement': Box(low=-1, high=1, shape=(3,), dtype=float),
-                'camera': Box(low=-5, high=5, shape=(2,), dtype=float),
-                'inventory': Discrete(7),
-                'placement': Discrete(3),
-            })
 
-        observation_space = {
-            'inventory': Box(low=0, high=20, shape=(6,), dtype=float),
-            'compass': Box(low=-180, high=180, shape=(1,), dtype=float),
-            'dialog': String()
-        }
-        if vector_state:
-            observation_space['agentPos'] = Box(
-                low=np.array([-8, -2, -8, -90, 0], dtype=float),
-                high=np.array([8, 12, 8, 90, 360], dtype=float),
-                shape=(5,)
-            )
-            observation_space['grid'] = Box(low=-1, high=7, shape=BUILD_ZONE_SIZE, dtype=int)
-        if target_in_obs:
-            observation_space['target_grid'] = Box(
-                low=-1, high=7, shape=BUILD_ZONE_SIZE, dtype=int
-            )
-        if render:
-            observation_space['pov'] = Box(
-                low=0, high=255, shape=(*self.render_size, 3), dtype=np.uint8
-            )
-
-        self.observation_space = Dict(observation_space)
-        self.max_int = 0
-        self.name = name
+        self.action_space = get_action_space(action_space, discretize)
+        self.observation_space = get_observation_space(
+            render, target_in_obs, vector_state, self.render_size
+        )
 
         self.do_render = render
         self.renderer = self._setup_pyglet_renderer() if render and not fake else None
@@ -150,8 +120,6 @@ class GridWorld(Env):
         self.reset()
 
     def initialize_world(self, starting_grid, initial_poisition):
-        """
-        """
         self._overwrite_starting_grid = starting_grid
         warnings.warn(
             'Default task starting grid is overwritten using .initialize_world method. '
@@ -184,7 +152,7 @@ class GridWorld(Env):
         elif self._task_generator is not None:
             self._task = self._task_generator.reset()
 
-        self.step_no = 0
+        self.i_step = 0
         self._task.reset()
         if self._overwrite_starting_grid is not None:
             self.starting_grid = self._overwrite_starting_grid
@@ -237,6 +205,9 @@ class GridWorld(Env):
         if not self.do_render:
             raise ValueError('create env with render=True')
 
+        if self.fake:
+            return self.observation_space['pov'].sample()
+
         return self.renderer.render(
             self.agent.position, self.agent.rotation
         )
@@ -249,7 +220,7 @@ class GridWorld(Env):
                                 '.set_task_generator method')
             else:
                 raise ValueError('Task is not initialized! Run .reset() first.')
-        self.step_no += 1
+        self.i_step += 1
 
         self.world.step(
             self.agent, action, select_and_place=self.select_and_place,
@@ -270,15 +241,13 @@ class GridWorld(Env):
             obs['agentPos'] = np.array([x, y, z, pitch, yaw], dtype=float)
 
         terminated, reward = self.calculate_progress()
-        truncated = self.step_no == self.max_steps
+        truncated = self.i_step == self.max_steps
         done = terminated or truncated
 
         if self.target_in_obs:
             obs['target_grid'] = self._task.target_grid.copy()
-        if self.do_render and not self.fake:
+        if self.do_render:
             obs['pov'] = self.render()
-        elif self.do_render:
-            obs['pov'] = self.observation_space['pov'].sample()
         return obs, reward, done, {}
 
     def calculate_progress(self):
@@ -303,17 +272,79 @@ class GridWorld(Env):
         from gridworld.render import Renderer
 
         dir_path = os.path.dirname(gridworld.__file__)
+        width, height = self.render_size
         renderer = Renderer(
-            width=self.render_size[0],
-            height=self.render_size[1],
-            dir_path=dir_path,
-            caption='Pyglet', resizable=False,
+            width=width, height=height,
+            dir_path=dir_path, caption='Pyglet', resizable=False,
         )
         # setup callbacks
         self.world.add_callback('on_add', renderer.add_block)
         self.world.add_callback('on_remove', renderer.remove_block)
 
         return renderer
+
+
+def get_action_space(action_space, discretize):
+    assert action_space in ('walking', 'flying'), (
+        f'Unknown action space: {action_space}'
+    )
+
+    if action_space == 'flying':
+        return Dict({
+            'movement': Box(low=-1, high=1, shape=(3,), dtype=float),
+            'camera': Box(low=-5, high=5, shape=(2,), dtype=float),
+            'inventory': Discrete(7),
+            'placement': Discrete(3),
+        })
+
+    # walking
+    if discretize:
+        return Discrete(18)
+
+    # walking continuous
+    return Dict({
+        'forward': Discrete(2),
+        'back': Discrete(2),
+        'left': Discrete(2),
+        'right': Discrete(2),
+        'jump': Discrete(2),
+        'attack': Discrete(2),
+        'use': Discrete(2),
+        'camera': Box(low=-5, high=5, shape=(2,)),
+        'hotbar': Discrete(7)
+    })
+
+
+def get_observation_space(
+        render, target_in_obs, vector_state, render_size
+):
+    observation_space = {
+        'inventory': Box(low=0, high=20, shape=(6,), dtype=float),
+        'compass': Box(low=-180, high=180, shape=(1,), dtype=float),
+        'dialog': String()
+    }
+
+    if vector_state:
+        observation_space['agentPos'] = Box(
+            low=np.array([-8, -2, -8, -90, 0], dtype=float),
+            high=np.array([8, 12, 8, 90, 360], dtype=float),
+            shape=(5,)
+        )
+        observation_space['grid'] = Box(
+            low=-1, high=7, shape=BUILD_ZONE_SIZE, dtype=int
+        )
+
+    if target_in_obs:
+        observation_space['target_grid'] = Box(
+            low=-1, high=7, shape=BUILD_ZONE_SIZE, dtype=int
+        )
+
+    if render:
+        width, height = render_size
+        observation_space['pov'] = Box(
+            low=0, high=255, shape=(width, height, 3), dtype=np.uint8
+        )
+    return Dict(observation_space)
 
 
 @numba.jit(nopython=True, cache=True, inline='always')

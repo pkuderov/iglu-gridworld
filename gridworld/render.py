@@ -36,7 +36,7 @@ PLATFORM = platform.system()
 class Renderer(Window):
     TEXTURE_PATH = 'texture.png'
 
-    def __init__(self, dir_path, width, height, **kwargs):
+    def __init__(self, width, height, dir_path, **kwargs):
         # workaround for non-headless macOS
         is_headless = pyglet.options['headless']
         raw_width, raw_height = width, height

@@ -6,11 +6,18 @@ from numba.typed.typedlist import List
 
 TICKS_PER_SEC = 60000
 
+BUILD_ZONE_SIZE_X = 11
+BUILD_ZONE_SIZE_Z = 11
+BUILD_ZONE_SIZE = 9, 11, 11
+
+PLAYER_HEIGHT = 2
+
 # Size of sectors used to ease block loading.
 SECTOR_SIZE = 16
 
 WALKING_SPEED = 5
 FLYING_SPEED = 15
+TERMINAL_VELOCITY = 50
 
 GRAVITY = 20.0
 MAX_JUMP_HEIGHT = 1.2  # About the height of a block.
@@ -23,10 +30,6 @@ MAX_JUMP_HEIGHT = 1.2  # About the height of a block.
 # Use t and the desired MAX_JUMP_HEIGHT to solve for v_0 (jump speed) in
 #    s = s_0 + v_0 * t + (a * t^2) / 2
 JUMP_SPEED = math.sqrt(2 * GRAVITY * MAX_JUMP_HEIGHT)
-
-TERMINAL_VELOCITY = 50
-
-PLAYER_HEIGHT = 2
 
 int_2d = tuple[int, int]
 int_3d = tuple[int, int, int]
@@ -206,7 +209,3 @@ FACES = List([
     (0, 0, 1),
     (0, 0, -1),
 ])
-
-BUILD_ZONE_SIZE_X = 11
-BUILD_ZONE_SIZE_Z = 11
-BUILD_ZONE_SIZE = 9, 11, 11

@@ -21,7 +21,7 @@ class Agent:
     rotation: float_2d
     strafe: int_2d
 
-    def __init__(self, is_flying: bool, sustain=False) -> None:
+    def __init__(self, is_flying: bool) -> None:
         # When flying gravity has no effect and speed is increased.
         self.flying = is_flying
         self.position = (0., 0., 0.)
@@ -30,7 +30,7 @@ class Agent:
         self.reticle = None
 
         # actions are long-lasting state switches
-        self.sustain = sustain
+        self.sustain = False
 
         # Velocity in the y (upward) direction.
         self.dy = 0
@@ -235,64 +235,6 @@ class World:
 
     # ========= UNIFIED AGENT CONTROL =========
     @staticmethod
-    def parse_walking_discrete_action(action):
-        # 0 noop; 1 forward; 2 back; 3 left; 4 right; 5 jump; 6-11 hotbar; 12 camera left;
-        # 13 camera right; 14 camera up; 15 camera down; 16 attack; 17 use;
-        # action = list(action).index(1)
-        strafe = [0, 0]
-        camera = [0, 0]
-        dy = 0
-        inventory = None
-        remove = False
-        add = False
-        if action == 1:
-            strafe[0] += -1
-        elif action == 2:
-            strafe[0] += 1
-        elif action == 3:
-            strafe[1] += -1
-        elif action == 4:
-            strafe[1] += 1
-        elif action == 5:
-            dy = 1
-        elif 6 <= action <= 11:
-            inventory = action - 5
-        elif action == 12:
-            camera[0] = -5
-        elif action == 13:
-            camera[0] = 5
-        elif action == 14:
-            camera[1] = -5
-        elif action == 15:
-            camera[1] = 5
-        elif action == 16:
-            remove = True
-        elif action == 17:
-            add = True
-        return strafe, dy, inventory, camera, remove, add
-
-    @staticmethod
-    def parse_walking_action(action):
-        strafe = [0,0]
-        if action['forward']:
-            strafe[0] += -1
-        if action['back']:
-            strafe[0] += 1
-        if action['left']:
-            strafe[1] += -1
-        if action['right']:
-            strafe[1] += 1
-        jump = int(action['jump'])
-        if action['hotbar'] == 0:
-            inventory = None
-        else:
-            inventory = action['hotbar']
-        camera = action['camera']
-        remove = bool(action['attack'])
-        add = bool(action['use'])
-        return strafe, jump, inventory, camera, remove, add
-
-    @staticmethod
     def parse_flying_action(action):
         """
         Args:
@@ -311,12 +253,15 @@ class World:
         remove = action['placement'] == 2
         return strafe, dy, inventory, camera, remove, add
 
-    def step(self, agent, action, select_and_place=False, action_space='walking', discretize=True):
+    def step(
+            self, agent, action, select_and_place=False,
+            action_space='walking', discretize=True
+    ):
         if action_space == 'walking':
             if discretize:
-                tup = self.parse_walking_discrete_action(action)
+                tup = parse_walking_discrete_action(action)
             else:
-                tup = self.parse_walking_action(action)
+                tup = parse_walking_action(action)
         elif action_space == 'flying':
             tup = self.parse_flying_action(action)
         else:
@@ -332,6 +277,64 @@ class World:
         self.update(agent, dt=1/20.)
 
     # ========= END UNIFIED AGENT CONTROL =========
+
+
+def parse_walking_action(action):
+    strafe = [0,0]
+    if action['forward']:
+        strafe[0] += -1
+    if action['back']:
+        strafe[0] += 1
+    if action['left']:
+        strafe[1] += -1
+    if action['right']:
+        strafe[1] += 1
+    jump = int(action['jump'])
+    if action['hotbar'] == 0:
+        inventory = None
+    else:
+        inventory = action['hotbar']
+    camera = action['camera']
+    remove = bool(action['attack'])
+    add = bool(action['use'])
+    return strafe, jump, inventory, camera, remove, add
+
+
+def parse_walking_discrete_action(action):
+    # 0 noop; 1 forward; 2 back; 3 left; 4 right; 5 jump; 6-11 hotbar; 12 camera left;
+    # 13 camera right; 14 camera up; 15 camera down; 16 attack; 17 use;
+    # action = list(action).index(1)
+    strafe = [0, 0]
+    camera = [0, 0]
+    dy = 0
+    inventory = None
+    remove = False
+    add = False
+    if action == 1:
+        strafe[0] += -1
+    elif action == 2:
+        strafe[0] += 1
+    elif action == 3:
+        strafe[1] += -1
+    elif action == 4:
+        strafe[1] += 1
+    elif action == 5:
+        dy = 1
+    elif 6 <= action <= 11:
+        inventory = action - 5
+    elif action == 12:
+        camera[0] = -5
+    elif action == 13:
+        camera[0] = 5
+    elif action == 14:
+        camera[1] = -5
+    elif action == 15:
+        camera[1] = 5
+    elif action == 16:
+        remove = True
+    elif action == 17:
+        add = True
+    return strafe, dy, inventory, camera, remove, add
 
 
 # ========= NUMBA-OPTIMIZED IMPLEMENTATIONS =========
@@ -459,7 +462,11 @@ def _move_camera(rotation: float_2d, d_yaw: float, d_pitch: float) -> tuple[floa
 
 @numba.jit(nopython=True, cache=True, inline='always')
 def _is_build_zone(x, y, z, pad=0):
-    return -5 - pad <= x <= 5 + pad and -5 - pad <= z <= 5 + pad and -1 - pad <= y < 8 + pad
+    return (
+        -5 - pad <= x <= 5 + pad and
+        -5 - pad <= z <= 5 + pad and
+        -1 - pad <= y < 8 + pad
+    )
 
 
 @numba.jit(nopython=True)
