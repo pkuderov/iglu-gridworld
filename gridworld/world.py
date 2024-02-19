@@ -1,6 +1,7 @@
 import math
 
 import numba
+import numpy as np
 from gridworld.utils import (
     WHITE, GREY, BLUE, FACES, int_3d, FLYING_SPEED, WALKING_SPEED, GRAVITY,
     TERMINAL_VELOCITY, PLAYER_HEIGHT, JUMP_SPEED, discretize_3d, float_3d, float_2d, int_2d,
@@ -35,9 +36,7 @@ class Agent:
         # Velocity in the y (upward) direction.
         self.dy = 0
         self.time_int_steps = 2
-        self.inventory = [
-            20, 20, 20, 20, 20, 20
-        ]
+        self.inventory = np.full(6, 20, dtype=int)
         self.active_block = BLUE
 
 
@@ -75,7 +74,7 @@ class World:
         self.callbacks[name].append(func)
 
     # ========= BLOCKS RELATED METHODS =========
-    def reset(self):
+    def _reset(self):
         for position in self.placed:
             self.remove_block(position)
         self.initialized = False
@@ -86,6 +85,7 @@ class World:
         self.world.clear()
         self.shown = {}
         self.placed = set()
+        raise NotImplementedError('This method is not tested')
 
     def initialize(self):
         for position, texture in self.init_blocks.items():

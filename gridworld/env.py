@@ -1,7 +1,7 @@
 import gym
 import numba
 import numpy as np
-from gridworld.task import Task, Tasks, to_dense_grid
+from gridworld.task import Task, to_dense_grid, to_sparse_positions
 from gridworld.utils import int_3d, BUILD_ZONE_SIZE
 from gridworld.world import Agent, World
 from gym import Env
@@ -21,6 +21,7 @@ class String(Space):
 
 # TODO:
 #  - switch to gymnasium.Env API
+#  - eliminate copying in the returned observation — ensure copying when needed on the user side
 
 
 class GridWorld(Env):
@@ -30,11 +31,12 @@ class GridWorld(Env):
     max_steps: int
 
     def __init__(
-            self, render=True, max_steps=250, select_and_place=False,
-            discretize=False,
-            right_placement_scale=1., wrong_placement_scale=0.1,
-            render_size=(64, 64), target_in_obs=False, action_space='walking', 
-            vector_state=True, fake=False
+            self, max_steps=250,
+            action_space='walking', discretize=False, vector_state=True,
+            render=True, render_size=(64, 64), target_in_obs=False,
+            select_and_place=False,
+            compute_reward=True, right_placement_scale=1., wrong_placement_scale=0.1,
+            fake=False
     ):
         is_flying = action_space == 'flying'
         self.agent = Agent(is_flying=is_flying)
@@ -44,18 +46,21 @@ class GridWorld(Env):
 
         # TODO: move to world
         self.grid = np.zeros(BUILD_ZONE_SIZE, dtype=int)
-        self.starting_grid = None
+        self.initial_blocks = to_sparse_positions([])
+        self.initial_position = (0, 0, 0)
+        self.initial_rotation = (0, 0)
 
         self.i_step = 0
         self.max_steps = max_steps
 
-        self._task = None
+        self.task = None
+        self.require_reset = True
 
+        self.compute_reward = compute_reward
         self.right_placement_scale = right_placement_scale
         self.wrong_placement_scale = wrong_placement_scale
         self.right_placement = 0
         self.wrong_placement = 0
-        self.max_int = 0
 
         self.render_size = render_size
         self.select_and_place = select_and_place
@@ -65,9 +70,9 @@ class GridWorld(Env):
         self.action_space_type = action_space
         self.fake = fake
 
-        self._overwrite_starting_grid = None
-        self.initial_position = (0, 0, 0)
-        self.initial_rotation = (0, 0)
+        self._overwrite_initial_blocks = None
+        self._diff_init_grid = None
+        self._diff_task = None
 
         self.action_space = get_action_space(action_space, discretize)
         self.observation_space = get_observation_space(
@@ -77,6 +82,133 @@ class GridWorld(Env):
         self.do_render = render
         self.renderer = self._setup_pyglet_renderer() if render and not fake else None
         self.world.initialize()
+
+    def set_task(self, task: Task):
+        """
+        Assigns provided task into the environment. On each .reset, the env
+        Queries the .reset method for the task object. This method should drop
+        the task state to the initial one.
+        Note that the env can only work with non-None task or task generator.
+        """
+        self.task = task
+        self.require_reset = True
+
+    def initialize_world(self, initial_blocks, initial_position):
+        self._overwrite_initial_blocks = initial_blocks
+        self.initial_position = tuple(initial_position[:3])
+        self.initial_rotation = tuple(initial_position[3:])
+        self.require_reset = True
+
+    def reset(self, **_):
+        self.i_step = 0
+
+        if self._overwrite_initial_blocks is not None:
+            self.initial_blocks = self._overwrite_initial_blocks
+        else:
+            self.initial_blocks = self.task.initial_blocks
+
+        for block in set(self.world.placed):
+            self.world.remove_block(block)
+        for x, y, z, color in self.initial_blocks:
+            self.world.add_block((x, y, z), color)
+
+        self.agent.position = self.initial_position
+        self.agent.rotation = self.initial_rotation
+        self.agent.inventory = np.full(6, 20, dtype=int)
+        self.agent.inventory[self.initial_blocks[:, -1] - 1] -= 1
+
+        self.task.reset()
+        if self.initial_blocks.size > 0:
+            # make diff task only if there are initial blocks
+            self._diff_init_grid = to_dense_grid(self.initial_blocks)
+            self._diff_task = Task(
+                # create a synthetic task with only diff blocks.
+                # blocks to remove have negative ids.
+                target_grid=self.task.target_grid - self._diff_init_grid
+            )
+            self._diff_task.reset()
+        else:
+            self._diff_task = None
+            self._diff_init_grid = None
+
+        obs = {
+            'inventory': self.agent.inventory,
+            'compass': np.array([0.], dtype=float),
+            'dialog': self.task.chat
+        }
+        if self.vector_state:
+            obs['grid'] = self.grid.copy()
+            obs['agentPos'] = np.array([0., 0., 0., 0., 0.], dtype=float)
+        if self.target_in_obs:
+            obs['target_grid'] = self.task.target_grid.copy()
+        if self.do_render:
+            obs['pov'] = self.render()
+
+        self.require_reset = False
+        return obs
+
+    def step(self, action):
+        assert not self.require_reset, 'Environment is not reset'
+        self.i_step += 1
+
+        self.world.step(
+            self.agent, action, select_and_place=self.select_and_place,
+            action_space=self.action_space_type, discretize=self.discretize
+        )
+
+        x, y, z = self.agent.position
+        yaw, pitch = self.agent.rotation
+
+        obs = {
+            'inventory': self.agent.inventory,
+            'compass': np.array([yaw - 180., ], dtype=float),
+            'dialog': self.task.chat
+        }
+
+        if self.vector_state:
+            obs['grid'] = self.grid.copy()
+            obs['agentPos'] = np.array([x, y, z, pitch, yaw], dtype=float)
+
+        terminated, reward = self.calculate_progress()
+        truncated = self.i_step == self.max_steps
+        done = terminated or truncated
+
+        if self.target_in_obs:
+            obs['target_grid'] = self.task.target_grid.copy()
+        if self.do_render:
+            obs['pov'] = self.render()
+        return obs, reward, done, {}
+
+    def render(self, *_, **__):
+        if not self.do_render:
+            raise ValueError('create env with render=True')
+
+        if self.fake:
+            return self.observation_space['pov'].sample()
+
+        return self.renderer.render(
+            self.agent.position, self.agent.rotation
+        )
+
+    def close(self):
+        if self.renderer is not None:
+            self.renderer.close()
+            del self.renderer
+
+        super().close()
+
+    def calculate_progress(self):
+        if self._diff_task is not None:
+            diff_grid = self.grid - self._diff_init_grid
+            n_correct, n_incorrect, done = self._diff_task.step_intersection(diff_grid)
+        else:
+            n_correct, n_incorrect, done = self.task.step_intersection(self.grid)
+
+        if n_correct == 0:
+            reward = n_incorrect * self.wrong_placement_scale
+        else:
+            reward = n_correct * self.right_placement_scale
+        return done, reward
 
     def _add_block(self, position, kind, build_zone=True):
         if self.world.initialized and build_zone:
@@ -92,134 +224,6 @@ class GridWorld(Env):
                     f'grid state: {self.grid.nonzero()[0]};'
                 )
             self.grid[y, x, z] = 0
-
-    def set_task(self, task: Task):
-        """
-        Assigns provided task into the environment. On each .reset, the env
-        Queries the .reset method for the task object. This method should drop
-        the task state to the initial one.
-        Note that the env can only work with non-None task or task generator.
-        """
-        self._task = task
-        self.reset()
-
-    def initialize_world(self, starting_grid, initial_poisition):
-        self._overwrite_starting_grid = starting_grid
-        self.initial_position = tuple(initial_poisition[:3])
-        self.initial_rotation = tuple(initial_poisition[3:])
-        self.reset()
-
-    @property
-    def task(self):
-        return self._task
-
-    def reset(self, **_):
-        self.i_step = 0
-
-        self.starting_grid = self._task.initial_blocks
-        if self._overwrite_starting_grid is not None:
-            self.starting_grid = self._overwrite_starting_grid
-
-        self._task.reset()
-        self._synthetic_init_grid = None
-        if self.starting_grid is not None:
-            self._synthetic_init_grid = to_dense_grid(self.starting_grid)
-            self._synthetic_task = Task(
-                # create a synthetic task with only diff blocks.
-                # blocks to remove have negative ids.
-                target_grid=self._task.target_grid - self._synthetic_init_grid
-            )
-            self._synthetic_task.reset()
-
-        for block in set(self.world.placed):
-            self.world.remove_block(block)
-
-        if self.starting_grid is not None:
-            for x, y, z, bid in self.starting_grid:
-                self.world.add_block((x, y, z), bid)
-
-        self.agent.position = self.initial_position
-        self.agent.rotation = self.initial_rotation
-        self.max_int = self._task.maximal_intersection(self.grid)
-        self.agent.inventory = [20 for _ in range(6)]
-        if self.starting_grid is not None:
-            for _, _, _, color in self.starting_grid:
-                self.agent.inventory[color - 1] -= 1
-
-        obs = {
-            'inventory': np.array(self.agent.inventory, dtype=float),
-            'compass': np.array([0.], dtype=float),
-            'dialog': self._task.chat
-        }
-        if self.vector_state:
-            obs['grid'] = self.grid.copy()
-            obs['agentPos'] = np.array([0., 0., 0., 0., 0.], dtype=float)
-        if self.target_in_obs:
-            obs['target_grid'] = self._task.target_grid.copy()
-        if self.do_render and not self.fake:
-            obs['pov'] = self.render()
-        elif self.do_render:
-            pov = self.observation_space['pov'].sample()
-            obs['pov'] = pov
-        return obs
-
-    def render(self, *_, **__):
-        if not self.do_render:
-            raise ValueError('create env with render=True')
-
-        if self.fake:
-            return self.observation_space['pov'].sample()
-
-        return self.renderer.render(
-            self.agent.position, self.agent.rotation
-        )
-
-    def step(self, action):
-        self.i_step += 1
-
-        self.world.step(
-            self.agent, action, select_and_place=self.select_and_place,
-            action_space=self.action_space_type, discretize=self.discretize
-        )
-
-        x, y, z = self.agent.position
-        yaw, pitch = self.agent.rotation
-
-        obs = {
-            'inventory': np.array(self.agent.inventory, dtype=float, copy=True),
-            'compass': np.array([yaw - 180., ], dtype=float),
-            'dialog': self._task.chat
-        }
-
-        if self.vector_state:
-            obs['grid'] = self.grid.copy()
-            obs['agentPos'] = np.array([x, y, z, pitch, yaw], dtype=float)
-
-        terminated, reward = self.calculate_progress()
-        truncated = self.i_step == self.max_steps
-        done = terminated or truncated
-
-        if self.target_in_obs:
-            obs['target_grid'] = self._task.target_grid.copy()
-        if self.do_render:
-            obs['pov'] = self.render()
-        return obs, reward, done, {}
-
-    def calculate_progress(self):
-        synthetic_grid = self.grid - self._synthetic_init_grid
-        n_correct, n_incorrect, done = self._synthetic_task.step_intersection(synthetic_grid)
-        if n_correct == 0:
-            reward = n_incorrect * self.wrong_placement_scale
-        else:
-            reward = n_correct * self.right_placement_scale
-        return done, reward
-
-    def close(self):
-        if self.renderer is not None:
-            self.renderer.close()
-            del self.renderer
-
-        super().close()
 
     def _setup_pyglet_renderer(self):
         import os
@@ -274,7 +278,7 @@ def get_observation_space(
         render, target_in_obs, vector_state, render_size
 ):
     observation_space = {
-        'inventory': Box(low=0, high=20, shape=(6,), dtype=float),
+        'inventory': Box(low=0, high=20, shape=(6,), dtype=int),
         'compass': Box(low=-180, high=180, shape=(1,), dtype=float),
         'dialog': String()
     }
