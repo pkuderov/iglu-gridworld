@@ -7,13 +7,7 @@ from gridworld.utils import int_2d, BUILD_ZONE_SIZE_X, BUILD_ZONE_SIZE_Z, BUILD_
 
 
 class Task:
-    def __init__(
-            self,
-            target_grid: npt.NDArray[int],
-            initial_blocks: list[tuple] | npt.NDArray[int] = None,
-            chat: str = '', last_instruction: str = None,
-            full_grid=None, invariant=True
-    ):
+    def __init__(self, target_grid: npt.NDArray[int], chat: str = '', last_instruction: str = None):
         """Creates a new Task represented with the past dialog and grid,
         the new instruction and target grid after completing the instruction.
 
@@ -31,97 +25,11 @@ class Task:
         assert target_grid.dtype == int
 
         self.target_grid = to_dense_grid(target_grid)
-        self.target_size = np.count_nonzero(target_grid)
-
-        self.initial_blocks = to_sparse_positions(initial_blocks)
+        # includes both the number of blocks to build and to remove
+        self.n_target_diffs = np.count_nonzero(target_grid)
 
         self.chat = chat
         self.last_instruction = last_instruction
-
-        self.full_grid = full_grid
-        self.full_size = np.count_nonzero(full_grid) if full_grid is not None else self.target_size
-
-        self.max_int = 0
-        self.prev_grid_size = 0
-        self.right_placement = 0
-        self.wrong_placement = 0
-
-        self.target_grids = [target_grid]
-        # fill self.target_grids with four rotations of the original grid around the vertical axis
-        for _ in range(3):
-            self.target_grids.append(_fill_grid_rotations(
-                np.zeros(target_grid.shape, dtype=int), self.target_grids[-1]
-            ))
-
-        full_grids = None
-        if full_grid is not None:
-            full_grids = [full_grid]
-            for _ in range(3):
-                full_grids.append(_fill_grid_rotations(
-                    np.zeros(target_grid.shape, dtype=int), full_grids[-1]
-                ))
-
-        if not invariant:
-            self.admissible = [[(0, 0)]]
-        else:
-            self.admissible = [
-                _get_admissible_points(
-                    full_grids[i] if full_grids is not None else self.target_grids[i],
-                    self.full_size
-                )
-                for i in range(4)
-            ]
-
-    def reset(self):
-        """
-        placeholder method to have uniform interface with `Tasks` class.
-        Resets all fields at initialization of the new episode.
-        """
-        if self.initial_blocks is not None:
-            self.max_int = self.maximal_intersection(
-                to_dense_grid(self.initial_blocks)
-            )
-        else:
-            self.max_int = 0
-        self.prev_grid_size = len(self.initial_blocks) if self.initial_blocks is not None else 0
-        self.right_placement = 0
-        self.wrong_placement = 0
-        return self
-
-    def step_intersection(self, grid):
-        """
-        Calculates the difference between the maximal intersection at previous step and the current one.
-        Note that the method updates object fields to save the grid size.
-
-        Args (grid): current grid
-        """
-        grid_size = (grid != 0).sum().item()
-        wrong_placement = (self.prev_grid_size - grid_size)
-        max_int = self.maximal_intersection(grid) if wrong_placement != 0 else self.max_int
-        right_placement = (max_int - self.max_int)
-        done = max_int == self.target_size
-
-        self.prev_grid_size = grid_size
-        self.max_int = max_int
-        self.right_placement = right_placement
-        self.wrong_placement = wrong_placement
-        return right_placement, wrong_placement, done
-
-    def maximal_intersection(self, grid, with_argmax=False):
-        max_int, argmax = 0, (0, 0, 0)
-        for i in range(len(self.admissible)):
-            for dx, dz in self.admissible[i]:
-                intersection = self.get_intersection(grid, dx, dz, i)
-                if intersection > max_int:
-                    max_int = intersection
-                    argmax = (dx, dz, i)
-
-        if with_argmax:
-            return max_int, argmax
-        return max_int
-
-    def get_intersection(self, grid, dx, dz, i):
-        return _get_intersection(self.target_grids[i], grid, dx, dz)
 
     # placeholder methods for uniformity with Tasks class
     ###
@@ -140,52 +48,58 @@ class Task:
 
 
 class TaskProgress:
-    def __init__(self, task: Task, invariant=True):
-        """Creates a new Task represented with the past dialog and grid,
-        the new instruction and target grid after completing the instruction.
+    """Represents the progress of the task completion in the environment."""
 
-        Chat — concatenation of all past utterances.
-        last_instruction : string, optional
-            the instruction corresponding to this step in the task,
-            by default None
-        initial_blocks : numpy.array, optional
-            sparse representation of the initial world, by default None
-        full_grid : numpy.array, optional
-            dense representation of the general target structure,
-            by default None
-        """
+    def __init__(
+            self, task: Task, incremental: bool = True,
+            initial_blocks: list[tuple] | npt.NDArray[int] = None,
+            initial_grid: npt.NDArray[int] = None,
+            full_grid: npt.NDArray[int] = None,
+            invariant=True
+    ):
+        self.initial_blocks, self.initial_grid = resolve_blocks_grid(initial_blocks, initial_grid)
+        self.incremental = incremental
 
+        if self.incremental:
+            # track only incremental progress, i.e. toward (target - initial) grid
+            task = Task(target_grid=task.target_grid - self.initial_grid)
         self.task = task
 
-        self.max_int = 0
-        self.prev_grid_size = 0
-        self.right_placement = 0
-        self.wrong_placement = 0
+        self.best_achieved_intersection = 0
+        self.prev_n_grid_blocks = 0
+
+        n_admissable_rotations = 4 if invariant else 1
 
         self.target_grids = [task.target_grid]
         # fill self.target_grids with four rotations of the original grid around the vertical axis
-        for _ in range(3):
+        for _ in range(n_admissable_rotations - 1):
             self.target_grids.append(_fill_grid_rotations(
                 np.zeros(task.target_grid.shape, dtype=int),
                 self.target_grids[-1]
             ))
 
-        if task.full_grid is not None:
-            full_grids = [task.full_grid]
-            for _ in range(3):
+        if full_grid is not None:
+            self.full_grid = to_dense_grid(full_grid)
+            self.n_full_diffs = np.count_nonzero(self.full_grid)
+
+            full_grids = [self.full_grid]
+            for _ in range(n_admissable_rotations - 1):
                 full_grids.append(_fill_grid_rotations(
                     np.zeros(task.target_grid.shape, dtype=int),
                     full_grids[-1]
                 ))
+            compare_against_grids = full_grids
         else:
-            full_grids = self.target_grids
+            self.full_grid = self.task.target_grid
+            self.n_full_diffs = self.task.n_target_diffs
+            compare_against_grids = self.target_grids
 
         if not invariant:
             self.admissible = [[(0, 0)]]
         else:
             self.admissible = [
-                _get_admissible_points(full_grids[i],task.full_size)
-                for i in range(4)
+                _get_admissible_points(compare_against_grids[i], self.n_full_diffs)
+                for i in range(n_admissable_rotations)
             ]
 
     def reset(self):
@@ -193,17 +107,13 @@ class TaskProgress:
         placeholder method to have uniform interface with `Tasks` class.
         Resets all fields at initialization of the new episode.
         """
-        if self.task.initial_blocks is not None:
-            self.max_int = self.maximal_intersection(
-                to_dense_grid(self.task.initial_blocks)
-            )
-            self.prev_grid_size = len(self.task.initial_blocks)
-        else:
-            self.max_int = 0
-            self.prev_grid_size = 0
 
-        self.right_placement = 0
-        self.wrong_placement = 0
+        self.best_achieved_intersection = 0
+        if self.initial_blocks.size > 0 and not self.incremental:
+            # initial blocks count toward the progress only for non-incremental tasks
+            self.best_achieved_intersection = self.get_best_intersection(self.initial_grid)
+
+        self.prev_n_grid_blocks = len(self.initial_blocks)
 
     def step_intersection(self, grid):
         """
@@ -212,19 +122,48 @@ class TaskProgress:
 
         Args (grid): current grid
         """
-        grid_size = (grid != 0).sum().item()
-        wrong_placement = (self.prev_grid_size - grid_size)
-        max_int = self.maximal_intersection(grid) if wrong_placement != 0 else self.max_int
-        right_placement = (max_int - self.max_int)
-        done = max_int == self.task.target_size
+        best_intersection, n_grid_blocks, n_diffs = self.get_best_intersection(grid, lazy=True)
 
-        self.prev_grid_size = grid_size
-        self.max_int = max_int
-        self.right_placement = right_placement
-        self.wrong_placement = wrong_placement
-        return right_placement, wrong_placement, done
+        n_improvements = best_intersection - self.best_achieved_intersection
+        done = best_intersection == self.task.n_target_diffs
 
-    def maximal_intersection(self, grid, with_argmax=False):
+        self.prev_n_grid_blocks = n_grid_blocks
+        self.best_achieved_intersection = best_intersection
+
+        return n_improvements, n_diffs, done
+
+    def get_best_intersection(self, grid, lazy: bool = False, with_full_stats: bool = False):
+        if self.incremental:
+            grid = grid - self.initial_grid
+
+        n_grid_diffs = np.count_nonzero(grid)
+        n_diffs_from_prev = self.prev_n_grid_blocks - n_grid_diffs
+
+        if lazy and n_diffs_from_prev == 0:
+            best_intersection, argmax = self.best_achieved_intersection, (0, 0, 0)
+        else:
+            best_intersection, argmax = self._get_best_intersection(grid)
+
+        if not with_full_stats:
+            return best_intersection, n_grid_diffs, n_diffs_from_prev
+
+        n_target_diffs = self.task.n_target_diffs
+
+        precision = safe_divide(best_intersection, n_target_diffs)
+        recall = safe_divide(best_intersection, n_grid_diffs)
+        f1 = safe_divide(2 * precision * recall, precision + recall)
+
+        return dict(
+            best_intersection=best_intersection,
+            n_grid_blocks=n_grid_diffs,
+            n_diffs=n_diffs_from_prev,
+            argmax=argmax,
+            precision=precision,
+            recall=recall,
+            f1=f1
+        )
+
+    def _get_best_intersection(self, grid):
         max_int, argmax = 0, (0, 0, 0)
         for i in range(len(self.admissible)):
             for dx, dz in self.admissible[i]:
@@ -232,13 +171,32 @@ class TaskProgress:
                 if intersection > max_int:
                     max_int = intersection
                     argmax = (dx, dz, i)
-
-        if with_argmax:
-            return max_int, argmax
-        return max_int
+        return max_int, argmax
 
     def get_intersection(self, grid, dx, dz, i):
         return _get_intersection(self.target_grids[i], grid, dx, dz)
+
+
+def resolve_blocks_grid(
+        blocks: list[tuple] | npt.NDArray[int] = None, grid: npt.NDArray[int] = None
+):
+    if grid is None:
+        # induce from sparse blocks
+        blocks = to_sparse_positions(blocks)
+        grid = to_dense_grid(blocks)
+        return blocks, grid
+
+    # ensure format correctness
+    grid = to_dense_grid(grid)
+    blocks = to_sparse_positions(grid if blocks is None else blocks)
+    return blocks, grid
+
+
+@numba.jit(nopython=True, cache=True, inline='always')
+def safe_divide(a, b) -> float:
+    if b == 0:
+        return 0.
+    return a / b
 
 
 @numba.jit(nopython=True, cache=True)
@@ -261,7 +219,7 @@ def _get_admissible_points(grid: npt.NDArray[int], size: int) -> list[int_2d]:
             low_dz = max(dz, 0)
             high_dz = BUILD_ZONE_SIZE_Z + min(dz, 0)
             sls = grid[:, low_dx:high_dx, low_dz:high_dz]
-            if np.sum(sls != 0) == size:
+            if np.count_nonzero(sls) == size:
                 admissible.append((dx, dz))
     return admissible
 
@@ -275,7 +233,7 @@ def _get_intersection(target_grid, grid, dx, dz):
     x_sls = slice(max(-dx, 0), BUILD_ZONE_SIZE_X + min(-dx, 0))
     z_sls = slice(max(-dz, 0), BUILD_ZONE_SIZE_Z + min(-dz, 0))
     sls_grid = grid[:, x_sls, z_sls]
-    return ((sls_target == sls_grid) & (sls_target != 0)).sum()
+    return np.count_nonzero((sls_target == sls_grid) & (sls_target != 0))
 
 
 @numba.jit(nopython=True, cache=True)
@@ -311,35 +269,37 @@ def _to_sparse_positions(blocks):
 
 
 def to_dense_grid(blocks):
-    is_sparse_list = isinstance(blocks, (list, tuple))
-    is_sparse_np = isinstance(blocks, np.ndarray) and blocks.shape[1] == 4
+    is_dense_grid = isinstance(blocks, np.ndarray) and blocks.shape == BUILD_ZONE_SIZE
+    if is_dense_grid:
+        # already in correct dense format
+        return blocks
 
-    if is_sparse_np or is_sparse_list:
-        blocks = to_sparse_positions(blocks)
-        grid = np.zeros(BUILD_ZONE_SIZE, dtype=int)
-        return _to_dense_grid(grid, blocks)
-
-    return blocks
+    # let to_sparse_positions handle the format correctness
+    blocks = to_sparse_positions(blocks)
+    grid = np.zeros(BUILD_ZONE_SIZE, dtype=int)
+    return _to_dense_grid(grid, blocks)
 
 
-def to_sparse_positions(blocks):
-    if blocks is None:
-        blocks = []
+def to_sparse_positions(grid):
+    if grid is None:
+        grid = []
 
-    if isinstance(blocks, np.ndarray):
-        if blocks.shape[1] == 4:
+    if isinstance(grid, np.ndarray):
+        if grid.shape[1] == 4:
             # already in correct sparse format
-            return blocks
-        return _to_sparse_positions(blocks)
+            return grid
 
-    if isinstance(blocks, (list, tuple)):
+        # TRANSFORMATION: dense -> sparse
+        return _to_sparse_positions(grid)
+
+    if isinstance(grid, (list, tuple)):
         # already in sparse format, but not as numpy array
-        if len(blocks) > 0:
-            return np.array(blocks, dtype=int)
+        if len(grid) > 0:
+            return np.array(grid, dtype=int)
         else:
             return np.empty((0, 4), dtype=int)
 
-    raise ValueError(f'Invalid blocks type: {type(blocks)} {blocks}')
+    raise ValueError(f'Invalid blocks type: {type(grid)} {grid}')
 
 
 class Tasks:

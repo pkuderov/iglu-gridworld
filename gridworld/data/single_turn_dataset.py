@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from gridworld.data.iglu_dataset import IGLUDataset
 from gridworld.data.load import download
-from gridworld.task import Task, to_dense_grid, to_sparse_positions
+from gridworld.task import Task, to_dense_grid, to_sparse_positions, TaskProgress
 from tqdm import tqdm
 
 
@@ -115,8 +115,11 @@ class SingleTurnIGLUDataset(IGLUDataset):
             last_instruction=last_instruction
         )
         # To properly init max_int and prev_grid_size fields
-        task.reset()
-        return task
+        # task.reset()
+        # instead resetting task, we should you task progress
+        task_progress = TaskProgress(task)
+        raise NotImplementedError("This method does not support new Task/TaskProgress API")
+        return task, task_progress
 
     def get_previous_dialogs(self, single_turn_row, multiturn_dialogs):
         # Filter multiturn rows with this game id and previous to step

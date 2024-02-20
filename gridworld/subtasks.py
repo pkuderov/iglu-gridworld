@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
-from gridworld.task import Tasks, Task, to_dense_grid, to_sparse_positions
+from gridworld.task import Tasks, Task, to_dense_grid, to_sparse_positions, TaskProgress
 
 
 class Subtasks(Tasks):
@@ -83,14 +83,18 @@ class Subtasks(Tasks):
             chat=dialog, last_instruction='\n'.join(self.dialog[tid])
         )
         # To properly init max_int and prev_grid_size fields
-        task.reset()
-        return task
+        # task.reset()
+        # instead resetting task, we should you task progress
+        task_progress = TaskProgress(task)
+        raise NotImplementedError("This method does not support new Task/TaskProgress API")
+        return task, task_progress
 
     def step_intersection(self, grid):
         """
 
         """
-        right_placement, wrong_placement, done = self.current.step_intersection(grid)
+        # right_placement, wrong_placement, done = self.current.step_intersection(grid)
+        right_placement, wrong_placement, done = self.task_progress.step_intersection(grid)
         if done and len(self.structure_seq) > self.task_goal and self.progressive:
             self.task_goal += 1
             self.current = self.create_task(self.task_start, self.task_goal)
@@ -101,7 +105,7 @@ class Subtasks(Tasks):
 
     def set_task(self, task_id):
         self.task_id = task_id
-        self.current = self.create_task(task_id)
+        self.current, self.task_progress = self.create_task(task_id)
         return self.current
 
     def set_task_obj(self, task: Task):

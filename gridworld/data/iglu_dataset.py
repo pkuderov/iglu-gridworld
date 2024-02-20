@@ -317,7 +317,12 @@ class IGLUDataset(Tasks):
         sample = np.random.choice(list(self.tasks.keys()))
         sess_id = np.random.choice(len(self.tasks[sample]))
         self.current = self.tasks[sample][sess_id]
-        return self.current.reset()
+        # return self.current.reset()
+
+        # instead resetting task, we should you task progress
+        self.task_progress = TaskProgress(self.current)
+        raise NotImplementedError("This method does not support new Task/TaskProgress API")
+        return task
 
     def __len__(self):
         return sum(len(sess.structure_seq) for sess in sum(self.tasks.values(), []))
