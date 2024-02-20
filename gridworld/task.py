@@ -149,8 +149,8 @@ class TaskProgress:
 
         n_target_diffs = self.task.n_target_diffs
 
-        precision = safe_divide(best_intersection, n_target_diffs)
-        recall = safe_divide(best_intersection, n_grid_diffs)
+        precision = safe_divide(best_intersection, n_grid_diffs)
+        recall = safe_divide(best_intersection, n_target_diffs)
         f1 = safe_divide(2 * precision * recall, precision + recall)
 
         return dict(
