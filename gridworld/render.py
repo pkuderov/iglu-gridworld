@@ -14,7 +14,7 @@ if os.environ.get('IGLU_HEADLESS', '1') == '1':
     pyglet.options["headless"] = True
     devices = os.environ.get('CUDA_VISIBLE_DEVICES')
     if devices is not None and devices != '':
-        pyglet.options['headless_device'] = int(devices.split(',')[0])
+        pyglet.options['headless_device'] = int(devices.split(',')[-1])
 
 
 from pyglet import app, image
