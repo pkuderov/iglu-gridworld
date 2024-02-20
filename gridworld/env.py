@@ -158,14 +158,16 @@ class GridWorld(Env):
             obs['agentPos'] = np.array([x, y, z, pitch, yaw], dtype=float)
 
         terminated, reward = self.calculate_progress()
-        truncated = self.i_step == self.max_steps
+        truncated = self.i_step >= self.max_steps
         done = terminated or truncated
 
         if self.target_in_obs:
             obs['target_grid'] = self.task.target_grid.copy()
         if self.do_render:
             obs['pov'] = self.render()
-        return obs, reward, done, {}
+        return obs, reward, done, dict(
+            terminated=terminated, truncated=truncated
+        )
 
     def render(self, *_, **__):
         if not self.do_render:
