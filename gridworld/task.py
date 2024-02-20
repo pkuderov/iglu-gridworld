@@ -68,11 +68,11 @@ class TaskProgress:
         self.best_achieved_intersection = 0
         self.prev_n_grid_blocks = 0
 
-        n_admissable_rotations = 4 if invariant else 1
+        n_admissible_rotations = 4 if invariant else 1
 
         self.target_grids = [task.target_grid]
         # fill self.target_grids with four rotations of the original grid around the vertical axis
-        for _ in range(n_admissable_rotations - 1):
+        for _ in range(n_admissible_rotations - 1):
             self.target_grids.append(_fill_grid_rotations(
                 np.zeros(task.target_grid.shape, dtype=int),
                 self.target_grids[-1]
@@ -83,7 +83,7 @@ class TaskProgress:
             self.n_full_diffs = np.count_nonzero(self.full_grid)
 
             full_grids = [self.full_grid]
-            for _ in range(n_admissable_rotations - 1):
+            for _ in range(n_admissible_rotations - 1):
                 full_grids.append(_fill_grid_rotations(
                     np.zeros(task.target_grid.shape, dtype=int),
                     full_grids[-1]
@@ -99,7 +99,7 @@ class TaskProgress:
         else:
             self.admissible = [
                 _get_admissible_points(compare_against_grids[i], self.n_full_diffs)
-                for i in range(n_admissable_rotations)
+                for i in range(n_admissible_rotations)
             ]
 
     def reset(self):
@@ -155,6 +155,7 @@ class TaskProgress:
 
         return dict(
             best_intersection=best_intersection,
+            n_target_diffs=self.task.n_target_diffs,
             n_grid_blocks=n_grid_diffs,
             n_diffs=n_diffs_from_prev,
             argmax=argmax,
