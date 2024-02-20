@@ -36,7 +36,7 @@ PLATFORM = platform.system()
 class Renderer(Window):
     TEXTURE_PATH = 'texture.png'
 
-    def __init__(self, width, height, dir_path, **kwargs):
+    def __init__(self, width, height, dir_path, invert_y=False, **kwargs):
         # workaround for non-headless macOS
         is_headless = pyglet.options['headless']
         raw_width, raw_height = width, height
@@ -52,10 +52,9 @@ class Renderer(Window):
         self._shown = {}
 
         self.cube_vertices_cache = {}
-        # FIXME: check if initialization at this exact point is necessary
-        # self.world.initialize()
 
         self.buffer_manager = pyglet.image.get_buffer_manager()
+        self.invert_y = invert_y
         self.last_frame_dt = 0
         self.realtime_rendering = os.environ.get('IGLU_RENDER_REALTIME', '0') == '1'
 
@@ -101,8 +100,9 @@ class Renderer(Window):
         rendered = np.asarray(data, dtype=np.uint8).reshape(self.render_shape)
         # NB: drop alpha channel
         rendered = rendered[..., :3]
-        # WARN: for faster rendering, turn off flipping over the Y-axis (0-th)
-        rendered = rendered[::-1]
+        if self.invert_y:
+            # WARN: for faster rendering, turn off flipping over the Y-axis (0-th)
+            rendered = rendered[::-1]
 
         if not self.is_headless:
             # noinspection PyUnboundLocalVariable

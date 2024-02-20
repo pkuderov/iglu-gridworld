@@ -37,7 +37,8 @@ class GridWorld(Env):
             action_space='walking', discretize=False, vector_state=True,
             render=True, render_size=(64, 64), target_in_obs=False,
             select_and_place=False, right_placement_scale=1., wrong_placement_scale=0.1,
-            fake=False, track_progress: bool = False, task_progress_params: dict = None
+            fake=False, track_progress: bool = False, task_progress_params: dict = None,
+            renderer_invert_y=False
     ):
         is_flying = action_space == 'flying'
         self.agent = Agent(is_flying=is_flying)
@@ -80,6 +81,7 @@ class GridWorld(Env):
         )
 
         self.do_render = render
+        self.renderer_invert_y = renderer_invert_y
         self.renderer = self._setup_pyglet_renderer() if render and not fake else None
         self.world.initialize()
 
@@ -225,7 +227,8 @@ class GridWorld(Env):
         width, height = self.render_size
         renderer = Renderer(
             width=width, height=height,
-            dir_path=dir_path, caption='Pyglet', resizable=False,
+            dir_path=dir_path, invert_y=self.renderer_invert_y,
+            caption='Pyglet', resizable=False,
         )
         # setup callbacks
         self.world.add_callback('on_add', renderer.add_block)
