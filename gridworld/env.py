@@ -24,6 +24,7 @@ class String(Space):
 # TODO:
 #  - switch to gymnasium.Env API
 #  - eliminate copying in the returned observation — ensure copying when needed on the user side
+#  - switch String space to already existing Text space
 
 
 class GridWorld(Env):
