@@ -12,6 +12,12 @@ from numba.typed.typeddict import Dict
 PLAYER_PAD = 0.25
 
 
+# TODO:
+#  - [ ] make yaw and pitch in range [-180, 180] and [-90, 90] respectively
+#  - [ ] check yaw setting consistency. Including the initial values (0, 0)!
+#  - [ ] numbify _parse_xxx_action
+
+
 class Agent:
     __slots__ = (
         'flying', 'strafe', 'position', 'rotation', 'reticle', 'sustain',
@@ -308,16 +314,16 @@ def _n_update_steps_from_falling_speed(dy: float) -> int:
 @numba.jit(nopython=True, cache=True)
 def get_sight_vector(rotation: float_2d) -> float_3d:
     """Returns the current line of sight vector indicating the direction the player is looking."""
-    x, y = rotation
-    # y ranges from -90 to 90, or -pi/2 to pi/2, so m ranges from 0 to 1 and
+    yaw, pitch = rotation
+    # pitch ranges from -90 to 90, or -pi/2 to pi/2, so m ranges from 0 to 1 and
     # is 1 when looking ahead parallel to the ground and 0 when looking
     # straight up or down.
-    m = math.cos(math.radians(y))
+    m = math.cos(math.radians(pitch))
     # dy ranges from -1 to 1 and is -1 when looking straight down and 1 when
     # looking straight up.
-    dy = math.sin(math.radians(y))
-    dx = math.cos(math.radians(x - 90)) * m
-    dz = math.sin(math.radians(x - 90)) * m
+    dy = math.sin(math.radians(pitch))
+    dx = math.cos(math.radians(yaw - 90)) * m
+    dz = math.sin(math.radians(yaw - 90)) * m
     return dx, dy, dz
 
 
@@ -334,10 +340,10 @@ def _get_motion_direction(strafe: int_2d, rotation: float_2d, is_flying: bool) -
     if not is_strafe:
         return 0., 0., 0.
 
-    x, y = rotation
+    yaw, pitch = rotation
     strafe_degrees = math.degrees(math.atan2(strafe_fb, strafe_lr))
-    y_angle = math.radians(y)
-    x_angle = math.radians(x + strafe_degrees)
+    y_angle = math.radians(pitch)
+    x_angle = math.radians(yaw + strafe_degrees)
     dx = math.cos(x_angle)
     dz = math.sin(x_angle)
     if is_flying:
@@ -541,17 +547,24 @@ def _parse_flying_action(action):
           * 'inventory': Discrete(7) - 0 for no-op, 1-6 for selecting block color
           * 'placement': Discrete(3) - 0 for no-op, 1 for placement, 2 for breaking
     """
-    strafe = tuple(action['movement'][:2])
-    dy = action['movement'][2]
+    movement = action['movement']
+    strafe, dy = tuple(movement[:2]), movement[2]
+
     camera = list(action['camera'])
-    inventory = action['inventory'] if action['inventory'] != 0 else None
-    add = action['placement'] == 1
-    remove = action['placement'] == 2
+
+    inventory = action['inventory']
+    if inventory == 0:
+        inventory = None
+
+    placement = action['placement']
+    add = placement == 1
+    remove = placement == 2
+
     return strafe, dy, inventory, camera, remove, add
 
 
 def _parse_walking_action(action):
-    strafe = [0,0]
+    strafe = [0, 0]
     if action['forward']:
         strafe[0] += -1
     if action['back']:
@@ -561,13 +574,15 @@ def _parse_walking_action(action):
     if action['right']:
         strafe[1] += 1
     jump = int(action['jump'])
-    if action['hotbar'] == 0:
+
+    inventory = action['hotbar']
+    if inventory == 0:
         inventory = None
-    else:
-        inventory = action['hotbar']
+
     camera = action['camera']
     remove = bool(action['attack'])
     add = bool(action['use'])
+
     return strafe, jump, inventory, camera, remove, add
 
 

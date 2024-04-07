@@ -101,7 +101,7 @@ class Renderer(Window):
         # NB: drop alpha channel
         rendered = rendered[..., :3]
         if self.invert_y:
-            # WARN: for faster rendering, turn off flipping over the Y-axis (0-th)
+            # WARN: for faster rendering, turn off flipping the Y-axis (0-th)
             rendered = rendered[::-1]
 
         if not self.is_headless:

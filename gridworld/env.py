@@ -1,20 +1,21 @@
 from __future__ import annotations
 
-import gym
+from typing import Any, SupportsFloat
+
+import gymnasium as gym
 import numba
 import numpy as np
 from gridworld.task import Task, to_sparse_positions, TaskProgress
 from gridworld.utils import int_3d, BUILD_ZONE_SIZE
 from gridworld.world import Agent, World
-from gym import Env
-from gym.spaces import Dict, Box, Discrete, Space
+from gymnasium.core import ObsType, ActType, RenderFrame
 
 
-class String(Space):
+class String(gym.Space):
     def __init__(self, ):
         super().__init__(shape=(), dtype=np.object_)
 
-    def sample(self):
+    def sample(self, mask: Any | None = None):
         return ''
 
     def contains(self, obj):
@@ -27,8 +28,8 @@ class String(Space):
 #  - switch String space to already existing Text space
 
 
-class GridWorld(Env):
-    observation_space: Dict
+class GridWorld(gym.Env):
+    observation_space: gym.spaces.Dict
 
     i_step: int
     max_steps: int
@@ -50,8 +51,8 @@ class GridWorld(Env):
         # TODO: move to world
         self.grid = np.zeros(BUILD_ZONE_SIZE, dtype=int)
         self.initial_blocks = to_sparse_positions([])
-        self.initial_position = (0, 0, 0)
-        self.initial_rotation = (0, 0)
+        self.initial_position = (0., 0., 0.)
+        self.initial_rotation = (0., 0.)
 
         self.i_step = 0
         self.max_steps = max_steps
@@ -104,7 +105,13 @@ class GridWorld(Env):
 
         self.require_reset = initial_blocks is not None or initial_agent_state is not None
 
-    def reset(self, **_):
+    def reset(
+        self, *,
+        seed: int | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> tuple[ObsType, dict[str, Any]]:
+        super().reset(seed=seed, options=options)
+
         self.i_step = 0
 
         for block in set(self.world.placed):
@@ -120,23 +127,14 @@ class GridWorld(Env):
         if self.track_progress:
             self.task_progress = self.create_progress_tracker()
 
-        obs = {
-            'inventory': self.agent.inventory,
-            'compass': np.array([0.], dtype=float),
-            'dialog': self.task.chat
-        }
-        if self.vector_state:
-            obs['grid'] = self.grid.copy()
-            obs['agentPos'] = np.array([0., 0., 0., 0., 0.], dtype=float)
-        if self.target_in_obs:
-            obs['target_grid'] = self.task.target_grid.copy()
-        if self.do_render:
-            obs['pov'] = self.render()
-
+        obs = self.observation()
+        info = {}
         self.require_reset = False
-        return obs
+        return obs, info
 
-    def step(self, action):
+    def step(
+        self, action: ActType
+    ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
         assert not self.require_reset, 'Environment is not reset'
         self.i_step += 1
 
@@ -145,32 +143,33 @@ class GridWorld(Env):
             action_space=self.action_space_type, discretize=self.discretize
         )
 
+        obs = self.observation()
+        terminated, reward = self.calculate_progress()
+        truncated = self.i_step >= self.max_steps
+        info = {}
+
+        return obs, reward, terminated, truncated, info
+
+    def observation(self) -> ObsType:
         x, y, z = self.agent.position
         yaw, pitch = self.agent.rotation
 
         obs = {
             'inventory': self.agent.inventory,
-            'compass': np.array([yaw - 180., ], dtype=float),
+            'compass': np.array([yaw - 180.], dtype=float),
             'dialog': self.task.chat
         }
-
         if self.vector_state:
             obs['grid'] = self.grid.copy()
             obs['agentPos'] = np.array([x, y, z, pitch, yaw], dtype=float)
-
-        terminated, reward = self.calculate_progress()
-        truncated = self.i_step >= self.max_steps
-        done = terminated or truncated
-
         if self.target_in_obs:
             obs['target_grid'] = self.task.target_grid.copy()
         if self.do_render:
             obs['pov'] = self.render()
-        return obs, reward, done, dict(
-            terminated=terminated, truncated=truncated
-        )
 
-    def render(self, *_, **__):
+        return obs
+
+    def render(self) -> RenderFrame | list[RenderFrame] | None:
         if not self.do_render:
             raise ValueError('create env with render=True')
 
@@ -244,7 +243,9 @@ def get_action_space(action_space, discretize):
     assert action_space in ('walking', 'flying'), (
         f'Unknown action space: {action_space}'
     )
+    from gymnasium.spaces import Dict, Box, Discrete
 
+    # flying continuous
     if action_space == 'flying':
         return Dict({
             'movement': Box(low=-1, high=1, shape=(3,), dtype=float),
@@ -253,7 +254,7 @@ def get_action_space(action_space, discretize):
             'placement': Discrete(3),
         })
 
-    # walking
+    # walking discrete
     if discretize:
         return Discrete(18)
 
@@ -274,6 +275,8 @@ def get_action_space(action_space, discretize):
 def get_observation_space(
         render, target_in_obs, vector_state, render_size
 ):
+    from gymnasium.spaces import Box, Dict
+
     observation_space = {
         'inventory': Box(low=0, high=20, shape=(6,), dtype=int),
         'compass': Box(low=-180, high=180, shape=(1,), dtype=float),
