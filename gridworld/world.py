@@ -26,21 +26,23 @@ class Agent:
 
     position: float_3d
     rotation: float_2d
-    strafe: int_2d
+    strafe: float_2d
+
+    dy: float
 
     def __init__(self, is_flying: bool) -> None:
         # When flying gravity has no effect and speed is increased.
         self.flying = is_flying
         self.position = (0., 0., 0.)
         self.rotation = (0., 0.)
-        self.strafe = (0, 0)
+        self.strafe = (0., 0.)
         self.reticle = None
 
         # actions are long-lasting state switches
         self.sustain = False
 
         # Velocity in the y (upward) direction.
-        self.dy = 0
+        self.dy = 0.
         self.time_int_steps = 2
         self.inventory = np.full(6, 20, dtype=int)
         self.active_block = BLUE
@@ -48,14 +50,21 @@ class Agent:
 
 class World:
     __slots__ = (
-        'world', 'init_blocks', 'shown', 'placed', 'callbacks', 'initialized'
+        'world', 'init_blocks', 'shown', 'placed', 'callbacks',
+        'initialized', '_action_parser'
     )
 
     world: dict[int_3d, int]
     # a set of block coordinates along with their colors that are placed initially
     init_blocks: dict[int_3d, int]
 
-    def __init__(self):
+    def __init__(self, flying, discrete_actions):
+        self._action_parser = (
+            _parse_flying_action if flying else
+            _parse_walking_discrete_action if discrete_actions else
+            _parse_walking_action
+        )
+
         self.world = Dict.empty(
             key_type=numba.typeof((0, 0, 0)),
             value_type=numba.typeof(0)
@@ -177,9 +186,9 @@ class World:
         )
 
         if not agent.sustain:
-            agent.strafe = (0, 0)
+            agent.strafe = (0., 0.)
             if agent.flying:
-                agent.dy = 0
+                agent.dy = 0.
 
     def place_or_remove_block(self, agent, remove: bool, place: bool):
         if place == remove:
@@ -242,24 +251,13 @@ class World:
 
     # ========= UNIFIED AGENT CONTROL =========
 
-    def step(
-            self, agent, action, select_and_place=False,
-            action_space='walking', discretize=True
-    ):
-        if action_space == 'walking':
-            if discretize:
-                tup = _parse_walking_discrete_action(action)
-            else:
-                tup = _parse_walking_action(action)
-        elif action_space == 'flying':
-            tup = _parse_flying_action(action)
-        else:
-            raise ValueError(f'Unknown action space: {action_space}')
+    def step(self, agent, action, select_and_place=False):
+        strafe, dy, inventory, camera, remove, add = self._action_parser(action)
 
-        strafe, dy, inventory, camera, remove, add = tup
         if select_and_place and inventory is not None:
             add = True
             remove = False
+
         self.movement(agent, strafe=strafe, dy=dy, inventory=inventory)
         self.move_camera(agent, *camera)
         self.place_or_remove_block(agent, remove=remove, place=add)
@@ -328,7 +326,7 @@ def get_sight_vector(rotation: float_2d) -> float_3d:
 
 
 @numba.jit(nopython=True, cache=True)
-def _get_motion_direction(strafe: int_2d, rotation: float_2d, is_flying: bool) -> float_3d:
+def _get_motion_direction(strafe: float_2d, rotation: float_2d, is_flying: bool) -> float_3d:
     """
     Returns the current motion vector indicating the velocity of the
     player: tuple containing the velocity in x, y, and z respectively.
@@ -363,18 +361,21 @@ def _get_motion_direction(strafe: int_2d, rotation: float_2d, is_flying: bool) -
 
 
 @numba.jit(nopython=True, cache=True, inline='always')
-def _add_strafe(agent_strafe: int_2d, strafe: int_2d) -> int_2d:
+def _add_strafe(agent_strafe: float_2d, strafe: float_2d) -> float_2d:
     ag_strafe_fb, ag_strafe_lr = agent_strafe
     strafe_fb, strafe_lr = strafe
     return ag_strafe_fb + strafe_fb, ag_strafe_lr + strafe_lr
 
 
-@numba.jit(nopython=True, cache=True, inline='always')
+# @numba.jit(nopython=True, cache=True, inline='always')
 def _compute_dy(agent_dy: float, dy: float, agent_flying: bool) -> float:
-    if dy != 0 and agent_dy == 0:
+    if agent_flying or agent_dy == 0:
+        # set [probably zero] vertical impulse with action if flying
+        # or [if walking] not moving vertically (i.e. already on the surface)
         return JUMP_SPEED * dy
-    if agent_flying and dy == 0:
-        return 0.
+
+    # only for walking: ignore the impulse and continue jumping/falling
+    return agent_dy
 
 
 @numba.jit(nopython=True, cache=True, inline='always')
@@ -529,7 +530,7 @@ def _update(
 
         agent_position = (x, y, z)
         if stop_vertical:
-            agent_dy = 0
+            agent_dy = 0.
 
     return agent_position, agent_dy, agent_time_int_steps
 
@@ -563,6 +564,47 @@ def _parse_flying_action(action):
     return strafe, dy, inventory, camera, remove, add
 
 
+@numba.jit(nopython=True, cache=True)
+def _parse_walking_discrete_action(action):
+    # 0 noop; 1 forward; 2 back; 3 left; 4 right; 5 jump; 6-11 hotbar;
+    # 12 camera left; 13 camera right; 14 camera up; 15 camera down;
+    # 16 attack; 17 use;
+    strafe = [0., 0.]
+    camera = [0., 0.]
+    dy = 0.
+    inventory = None
+    remove = False
+    add = False
+    if action == 1:
+        strafe[0] += -1.
+    elif action == 2:
+        strafe[0] += 1.
+    elif action == 3:
+        strafe[1] += -1.
+    elif action == 4:
+        strafe[1] += 1.
+    elif action == 5:
+        dy = 1.
+    elif 6 <= action <= 11:
+        inventory = action - 5
+    elif action == 12:
+        camera[0] = -5.
+    elif action == 13:
+        camera[0] = 5.
+    elif action == 14:
+        camera[1] = -5.
+    elif action == 15:
+        camera[1] = 5.
+    elif action == 16:
+        remove = True
+    elif action == 17:
+        add = True
+
+    # to tuple
+    strafe = (strafe[0], strafe[1])
+    return strafe, dy, inventory, camera, remove, add
+
+
 def _parse_walking_action(action):
     strafe = [0, 0]
     if action['forward']:
@@ -584,40 +626,3 @@ def _parse_walking_action(action):
     add = bool(action['use'])
 
     return strafe, jump, inventory, camera, remove, add
-
-
-def _parse_walking_discrete_action(action):
-    # 0 noop; 1 forward; 2 back; 3 left; 4 right; 5 jump; 6-11 hotbar; 12 camera left;
-    # 13 camera right; 14 camera up; 15 camera down; 16 attack; 17 use;
-    # action = list(action).index(1)
-    strafe = [0, 0]
-    camera = [0, 0]
-    dy = 0
-    inventory = None
-    remove = False
-    add = False
-    if action == 1:
-        strafe[0] += -1
-    elif action == 2:
-        strafe[0] += 1
-    elif action == 3:
-        strafe[1] += -1
-    elif action == 4:
-        strafe[1] += 1
-    elif action == 5:
-        dy = 1
-    elif 6 <= action <= 11:
-        inventory = action - 5
-    elif action == 12:
-        camera[0] = -5
-    elif action == 13:
-        camera[0] = 5
-    elif action == 14:
-        camera[1] = -5
-    elif action == 15:
-        camera[1] = 5
-    elif action == 16:
-        remove = True
-    elif action == 17:
-        add = True
-    return strafe, dy, inventory, camera, remove, add

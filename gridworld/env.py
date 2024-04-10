@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, SupportsFloat
+from typing import Any
 
 import gymnasium as gym
 import numba
@@ -8,7 +8,7 @@ import numpy as np
 from gridworld.task import Task, to_sparse_positions, TaskProgress
 from gridworld.utils import int_3d, BUILD_ZONE_SIZE
 from gridworld.world import Agent, World
-from gymnasium.core import ObsType, ActType, RenderFrame
+from gymnasium.core import ObsType, RenderFrame
 
 
 class String(gym.Space):
@@ -44,7 +44,7 @@ class GridWorld(gym.Env):
     ):
         is_flying = action_space == 'flying'
         self.agent = Agent(is_flying=is_flying)
-        self.world = World()
+        self.world = World(flying=is_flying, discrete_actions=discretize)
         self.world.add_callback('on_add', self._add_block)
         self.world.add_callback('on_remove', self._remove_block)
 
@@ -73,11 +73,11 @@ class GridWorld(gym.Env):
         self.select_and_place = select_and_place
         self.target_in_obs = target_in_obs
         self.vector_state = vector_state
-        self.discretize = discretize
+        self.discrete_actions = discretize
         self.action_space_type = action_space
         self.fake = fake
 
-        self.action_space = get_action_space(action_space, discretize)
+        self.action_space = get_action_space(action_space, self.discrete_actions)
         self.observation_space = get_observation_space(
             render, target_in_obs, vector_state, self.render_size
         )
@@ -105,12 +105,8 @@ class GridWorld(gym.Env):
 
         self.require_reset = initial_blocks is not None or initial_agent_state is not None
 
-    def reset(
-        self, *,
-        seed: int | None = None,
-        options: dict[str, Any] | None = None,
-    ) -> tuple[ObsType, dict[str, Any]]:
-        super().reset(seed=seed, options=options)
+    def reset(self, *args, **kwargs):
+        super().reset(*args, **kwargs)
 
         self.i_step = 0
 
@@ -132,16 +128,11 @@ class GridWorld(gym.Env):
         self.require_reset = False
         return obs, info
 
-    def step(
-        self, action: ActType
-    ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
+    def step(self, action):
         assert not self.require_reset, 'Environment is not reset'
         self.i_step += 1
 
-        self.world.step(
-            self.agent, action, select_and_place=self.select_and_place,
-            action_space=self.action_space_type, discretize=self.discretize
-        )
+        self.world.step(self.agent, action, select_and_place=self.select_and_place)
 
         obs = self.observation()
         terminated, reward = self.calculate_progress()
@@ -205,6 +196,9 @@ class GridWorld(gym.Env):
             **self.track_progress_params
         )
 
+    def is_flying(self):
+        return self.agent.flying
+
     def _add_block(self, position, kind, build_zone=True):
         if self.world.initialized and build_zone:
             x, y, z = to_grid_space(position)
@@ -256,6 +250,9 @@ def get_action_space(action_space, discretize):
 
     # walking discrete
     if discretize:
+        # 0 noop; 1 forward; 2 back; 3 left; 4 right; 5 jump; 6-11 hotbar;
+        # 12 camera left; 13 camera right; 14 camera up; 15 camera down;
+        # 16 attack; 17 use;
         return Discrete(18)
 
     # walking continuous
