@@ -196,6 +196,7 @@ class GridWorld(gym.Env):
             **self.track_progress_params
         )
 
+    @property
     def is_flying(self):
         return self.agent.flying
 

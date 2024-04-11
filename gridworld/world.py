@@ -4,8 +4,8 @@ import numba
 import numpy as np
 from gridworld.utils import (
     WHITE, GREY, BLUE, FACES, int_3d, FLYING_SPEED, WALKING_SPEED, GRAVITY,
-    TERMINAL_VELOCITY, PLAYER_HEIGHT, JUMP_SPEED, discretize_3d, float_3d, float_2d, int_2d,
-    to_float_3d, to_int_3d
+    TERMINAL_VELOCITY, PLAYER_HEIGHT, JUMP_SPEED, discretize_3d, float_3d, float_2d, to_float_3d,
+    to_int_3d
 )
 from numba.typed.typeddict import Dict
 
