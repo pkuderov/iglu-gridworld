@@ -146,7 +146,9 @@ class Renderer(Window):
     def close(self):
         if not self.is_headless:
             app.platform_event_loop.stop()
-            for key in self._shown:
+            # NB: copy keys to avoid RuntimeError: dictionary changed size during iteration
+            keys = list(self._shown.keys())
+            for key in keys:
                 self._shown.pop(key).delete()
 
         super().close()
