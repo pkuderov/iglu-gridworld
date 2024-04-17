@@ -22,12 +22,6 @@ class String(gym.Space):
         return isinstance(obj, str)
 
 
-# TODO:
-#  - switch to gymnasium.Env API
-#  - eliminate copying in the returned observation — ensure copying when needed on the user side
-#  - switch String space to already existing Text space
-
-
 class GridWorld(gym.Env):
     observation_space: gym.spaces.Dict
 
@@ -151,10 +145,10 @@ class GridWorld(gym.Env):
             'dialog': self.task.chat
         }
         if self.vector_state:
-            obs['grid'] = self.grid.copy()
-            obs['agentPos'] = np.array([x, y, z, pitch, yaw], dtype=float)
+            obs['grid'] = self.grid
+            obs['agent_pos'] = np.array([x, y, z, pitch, yaw - 180.], dtype=float)
         if self.target_in_obs:
-            obs['target_grid'] = self.task.target_grid.copy()
+            obs['target_grid'] = self.task.target_grid
         if self.do_render:
             obs['pov'] = self.render()
 
@@ -282,9 +276,9 @@ def get_observation_space(
     }
 
     if vector_state:
-        observation_space['agentPos'] = Box(
-            low=np.array([-8, -2, -8, -90, 0], dtype=float),
-            high=np.array([8, 12, 8, 90, 360], dtype=float),
+        observation_space['agent_pos'] = Box(
+            low=np.array([-8, -2, -8, -90, -180], dtype=float),
+            high=np.array([8, 12, 8, 90, 180], dtype=float),
             shape=(5,)
         )
         observation_space['grid'] = Box(
