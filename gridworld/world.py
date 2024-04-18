@@ -204,7 +204,7 @@ class World:
         if remove and block:
             self._try_remove_block(agent, block)
 
-    def _try_place_block(self, agent, block_position: int_3d):
+    def _try_place_block(self, agent: Agent, block_position: int_3d):
         texture = agent.active_block
         if agent.inventory[texture - 1] <= 0:
             return
@@ -238,7 +238,7 @@ class World:
 
     @staticmethod
     def movement(
-            agent, strafe: tuple[int, int], dy: float, inventory: int = None
+            agent: Agent, strafe: tuple[int, int], dy: float, inventory: int = None
     ):
         agent.strafe = _add_strafe(agent.strafe, strafe)
         agent.dy = _compute_dy(agent.dy, dy, agent.flying)

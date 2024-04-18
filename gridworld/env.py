@@ -112,7 +112,8 @@ class GridWorld(gym.Env):
         self.agent.position = self.initial_position
         self.agent.rotation = self.initial_rotation
         self.agent.inventory = np.full(6, 20, dtype=int)
-        self.agent.inventory[self.initial_blocks[:, -1] - 1] -= 1
+        # NB: correct way to do `-=` including the case of repeating indices
+        np.subtract.at(self.agent.inventory, self.initial_blocks[:, -1] - 1, 1)
 
         if self.track_progress:
             self.task_progress = self.create_progress_tracker()
