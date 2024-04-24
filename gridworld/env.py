@@ -113,6 +113,7 @@ class GridWorld(gym.Env):
         self.agent.rotation = self.initial_rotation
         self.agent.inventory = np.full(6, 20, dtype=int)
         # NB: correct way to do `-=` including the case of repeating indices
+        # NB: block colors are 1-indexed relative to inventory
         np.subtract.at(self.agent.inventory, self.initial_blocks[:, -1] - 1, 1)
 
         if self.track_progress:
@@ -175,9 +176,11 @@ class GridWorld(gym.Env):
 
     def calculate_progress(self):
         if self.track_progress:
-            n_correct, n_incorrect, done = self.task_progress.step_intersection(self.grid)
+            n_correct, n_incorrect, _ = self.task_progress.step_intersection(self.grid)
         else:
-            n_correct, n_incorrect, done = 0, 0, False
+            n_correct, n_incorrect = 0, 0
+
+        done = np.all(self.grid == self.task.target_grid)
 
         if n_correct == 0:
             reward = n_incorrect * self.wrong_placement_scale
@@ -186,10 +189,12 @@ class GridWorld(gym.Env):
         return done, reward
 
     def create_progress_tracker(self):
-        return TaskProgress(
+        task_progress = TaskProgress(
             task=self.task, initial_blocks=self.initial_blocks,
             **self.track_progress_params
         )
+        task_progress.reset()
+        return task_progress
 
     @property
     def is_flying(self):

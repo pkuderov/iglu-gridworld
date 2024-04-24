@@ -7,6 +7,13 @@ from gridworld.utils import int_2d, BUILD_ZONE_SIZE_X, BUILD_ZONE_SIZE_Z, BUILD_
 
 
 class Task:
+    target_grid: npt.NDArray[int]
+    n_target_diffs: int
+    n_target_blocks: int
+
+    chat: str
+    last_instruction: str
+
     def __init__(self, target_grid: npt.NDArray[int], chat: str = '', last_instruction: str = None):
         """Creates a new Task represented with the past dialog and grid,
         the new instruction and target grid after completing the instruction.
@@ -25,7 +32,6 @@ class Task:
         assert target_grid.dtype == int
 
         self.target_grid = to_dense_grid(target_grid)
-        # includes both the number of blocks to build and to remove
         self.n_target_diffs = np.count_nonzero(target_grid)
 
         self.chat = chat
@@ -49,22 +55,15 @@ class Task:
 
 class TaskProgress:
     """Represents the progress of the task completion in the environment."""
-
     def __init__(
-            self, task: Task, incremental: bool = True,
-            initial_blocks: list[tuple] | npt.NDArray[int] = None,
+            self, task: Task, initial_blocks: list[tuple] | npt.NDArray[int] = None,
             initial_grid: npt.NDArray[int] = None,
             full_grid: npt.NDArray[int] = None,
             invariant=True
     ):
         self.initial_blocks, self.initial_grid = resolve_blocks_grid(initial_blocks, initial_grid)
-        self.incremental = incremental
 
-        if self.incremental:
-            # track only incremental progress, i.e. toward (target - initial) grid
-            task = Task(target_grid=task.target_grid - self.initial_grid)
         self.task = task
-
         self.best_achieved_intersection = 0
         self.prev_n_grid_blocks = 0
 
@@ -107,9 +106,8 @@ class TaskProgress:
         placeholder method to have uniform interface with `Tasks` class.
         Resets all fields at initialization of the new episode.
         """
-
         self.best_achieved_intersection = 0
-        if self.initial_blocks.size > 0 and not self.incremental:
+        if self.initial_blocks.size > 0:
             # initial blocks count toward the progress only for non-incremental tasks
             self.best_achieved_intersection = self.get_best_intersection(self.initial_grid)
 
@@ -125,6 +123,7 @@ class TaskProgress:
         best_intersection, n_grid_blocks, n_diffs = self.get_best_intersection(grid, lazy=True)
 
         n_improvements = best_intersection - self.best_achieved_intersection
+
         done = best_intersection == self.task.n_target_diffs
 
         self.prev_n_grid_blocks = n_grid_blocks
@@ -133,9 +132,6 @@ class TaskProgress:
         return n_improvements, n_diffs, done
 
     def get_best_intersection(self, grid, lazy: bool = False, with_full_stats: bool = False):
-        if self.incremental:
-            grid = grid - self.initial_grid
-
         n_grid_diffs = np.count_nonzero(grid)
         n_diffs_from_prev = self.prev_n_grid_blocks - n_grid_diffs
 
