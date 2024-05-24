@@ -199,9 +199,10 @@ class World:
             agent.position, get_sight_vector(agent.rotation)
         )
 
+        # place and remove are mutually exclusive, so we can chain with `elif`
         if place and previous_block:
             self._try_place_block(agent, previous_block)
-        if remove and block:
+        elif remove and block:
             self._try_remove_block(agent, block)
 
     def _try_place_block(self, agent: Agent, block_position: int_3d):
@@ -241,7 +242,7 @@ class World:
             agent: Agent, strafe: tuple[int, int], dy: float, inventory: int = None
     ):
         agent.strafe = _add_strafe(agent.strafe, strafe)
-        agent.dy = _compute_dy(agent.dy, dy, agent.flying)
+        agent.dy = _compute_dy(agent.dy, dy, agent.flying, JUMP_SPEED)
 
         if inventory is not None:
             if not (1 <= inventory <= 6):
@@ -367,14 +368,12 @@ def _add_strafe(agent_strafe: float_2d, strafe: float_2d) -> float_2d:
     return ag_strafe_fb + strafe_fb, ag_strafe_lr + strafe_lr
 
 
-# @numba.jit(nopython=True, cache=True, inline='always')
-def _compute_dy(agent_dy: float, dy: float, agent_flying: bool) -> float:
-    if agent_flying or agent_dy == 0:
-        # set [probably zero] vertical impulse with action if flying
-        # or [if walking] not moving vertically (i.e. already on the surface)
-        return JUMP_SPEED * dy
-
-    # only for walking: ignore the impulse and continue jumping/falling
+@numba.jit(nopython=True, cache=True, inline='always')
+def _compute_dy(agent_dy: float, dy: float, agent_flying: bool, jump_speed: float) -> float:
+    if dy != 0 and agent_dy == 0:
+        agent_dy = jump_speed * dy
+    if agent_flying and dy == 0:
+        agent_dy = 0.
     return agent_dy
 
 
