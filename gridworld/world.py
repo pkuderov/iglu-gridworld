@@ -245,8 +245,7 @@ class World:
         agent.dy = _compute_dy(agent.dy, dy, agent.flying, JUMP_SPEED)
 
         if inventory is not None:
-            if not (1 <= inventory <= 6):
-                raise ValueError(f'Bad inventory id: {inventory}')
+            assert 1 <= inventory <= 6, f'Bad inventory id: {inventory}'
             agent.active_block = inventory
     # ========= END AGENT CONTROL =========
 
@@ -585,6 +584,7 @@ def _parse_walking_discrete_action(action):
     elif action == 5:
         dy = 1.
     elif 6 <= action <= 11:
+        # inventory in [1, 6] or None
         inventory = action - 5
     elif action == 12:
         camera[0] = -5.
@@ -616,6 +616,7 @@ def _parse_walking_action(action):
         strafe[1] += 1
     jump = int(action['jump'])
 
+    # inventory in [1, 6] or None
     inventory = action['hotbar']
     if inventory == 0:
         inventory = None
