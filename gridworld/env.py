@@ -1,36 +1,38 @@
 import warnings
 
-import gym
+import gymnasium
 import numba
 import numpy as np
-from gym import Env, Wrapper as gymWrapper
-from gym.spaces import Dict, Box, Discrete, Space
-
 from gridworld.core.world import Agent, World
 from gridworld.tasks.task import Task, Tasks
 from gridworld.utils import int_3d, BUILD_ZONE_SIZE
+from gymnasium.spaces import Dict, Discrete, Box
 
 
-class String(Space):
+class String(gymnasium.Space):
     def __init__(self, ):
         super().__init__(shape=(), dtype=np.object_)
 
-    def sample(self):
+    def sample(self, mask=None):
         return ''
 
     def contains(self, obj):
         return isinstance(obj, str)
 
 
-class GridWorld(Env):
+class GridWorld(gymnasium.Env):
     observation_space: Dict
 
     def __init__(
             self, render=True, max_steps=250, select_and_place=False,
             discretize=False, right_placement_scale=1., wrong_placement_scale=0.1,
             render_size=(64, 64), target_in_obs=False, action_space='walking', 
-            vector_state=True, fake=False, name=''
+            vector_state=True, fake=False, name='',
+            **kwargs
     ):
+        print(f'GridWorld unused kwargs: {kwargs}')
+        self.is_flying = action_space == 'flying'
+
         self.agent = Agent(sustain=False)
         self.world = World()
         self.grid = np.zeros(BUILD_ZONE_SIZE, dtype=int)
@@ -334,62 +336,13 @@ def to_grid_space(pos_3d: int_3d) -> int_3d:
     return x + 5, y + 1, z + 5
 
 
-class Wrapper(gymWrapper):
-    def __getattr__(self, name):
-        return getattr(self.env, name)
-    
-    def render(self, mode="human", **kwargs):
-        if isinstance(self.env, GridWorld):
-            return self.env.render()
-        else:
-            return self.env.render(mode, **kwargs)
-
-
-class SizeReward(Wrapper):
-    def __init__(self, env):
-        super().__init__(env)
-        self.size = 0
-
-    def reset(self):
-        self.size = 0
-        return super().reset()
-
-    def step(self, action):
-        obs, reward, done, info = super().step(action)
-        intersection = self.unwrapped.max_int
-        reward = max(intersection, self.size) - self.size
-        self.size = max(intersection, self.size)
-        reward += min(self.unwrapped.wrong_placement * 0.02, 0)
-        return obs, reward, done, info
-
-
-def create_env(
-        render=True, discretize=True, size_reward=True, select_and_place=True,
-        right_placement_scale=1, render_size=(64, 64), target_in_obs=False,
-        vector_state=False, max_steps=250, action_space='walking',
-        wrong_placement_scale=0.1, name='', fake=False
-):
-    env = GridWorld(
-        render=render, select_and_place=select_and_place,
-        discretize=discretize, right_placement_scale=right_placement_scale,
-        wrong_placement_scale=wrong_placement_scale, name=name,
-        render_size=render_size, target_in_obs=target_in_obs,
-        vector_state=vector_state, max_steps=max_steps,
-        action_space=action_space, fake=fake
-    )
-    if size_reward:
-        env = SizeReward(env)
-    # env = Actions(env)
-    return env
-
-
-gym.envs.register(
+gymnasium.envs.register(
      id='IGLUGridworld-v0',
      entry_point='gridworld.env:create_env',
      kwargs={}
 )
 
-gym.envs.register(
+gymnasium.envs.register(
      id='IGLUGridworldVector-v0',
      entry_point='gridworld.env:create_env',
      kwargs={'vector_state': True, 'render': False}
