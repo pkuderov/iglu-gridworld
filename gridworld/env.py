@@ -265,7 +265,7 @@ class GridWorld(gymnasium.Env):
             obs['pov'] = self.render()[..., :-1]
         elif self.do_render:
             obs['pov'] = self.observation_space['pov'].sample()
-        return obs
+        return obs, {}
 
     def render(self, *_, **__):
         if not self.do_render:
@@ -302,7 +302,7 @@ class GridWorld(gymnasium.Env):
             obs['agentPos'] = np.array([x, y, z, pitch, yaw], dtype=float)
 
         terminated, reward = self.calculate_progress()
-        truncated = self.step_no == self.max_steps
+        truncated = self.step_no >= self.max_steps
         done = terminated or truncated
 
         if self.target_in_obs:
@@ -311,7 +311,7 @@ class GridWorld(gymnasium.Env):
             obs['pov'] = self.render()[..., :-1]
         elif self.do_render:
             obs['pov'] = self.observation_space['pov'].sample()
-        return obs, reward, done, {}
+        return obs, reward, terminated, truncated, {}
 
     def calculate_progress(self):
         synthetic_grid = self.grid - self._synthetic_init_grid

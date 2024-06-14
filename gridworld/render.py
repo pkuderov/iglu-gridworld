@@ -195,13 +195,11 @@ class Renderer(Window):
         glColor3d(0, 0, 0)
         self.reticle.draw(GL_LINES)
 
-
     def close(self):
         if not self.is_headless:
             app.platform_event_loop.stop()
             for key in self._shown:
                 self._shown.pop(key).delete()
-
 
         super().close()
 
