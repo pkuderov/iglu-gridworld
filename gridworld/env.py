@@ -27,11 +27,12 @@ class GridWorld(gymnasium.Env):
             self, render=True, max_steps=250, select_and_place=False,
             discretize=False, right_placement_scale=1., wrong_placement_scale=0.1,
             render_size=(64, 64), target_in_obs=False, action_space='walking', 
-            vector_state=True, fake=False, name='',
+            vector_state=True, fake=False, name='', track_progress=False,
             **kwargs
     ):
         print(f'GridWorld unused kwargs: {kwargs}')
         self.is_flying = action_space == 'flying'
+        self.track_progress = track_progress
 
         self.agent = Agent(sustain=False)
         self.world = World()
@@ -314,6 +315,9 @@ class GridWorld(gymnasium.Env):
         return obs, reward, terminated, truncated, {}
 
     def calculate_progress(self):
+        if not self.track_progress:
+            return False, 0.
+
         synthetic_grid = self.grid - self._synthetic_init_grid
         n_correct, n_incorrect, done = self._synthetic_task.step_intersection(synthetic_grid)
         if n_correct == 0:
